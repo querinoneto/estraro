@@ -18,6 +18,26 @@ CONFIGURAÇÃO (objeto CONFIG no início do script):
 7. O administrador (CONFIG.admins) deve criar a conta e confirmar o e-mail pelo link recebido.
    TODOS os cadastros precisam confirmar o e-mail; os não-admin também ficam "aguardando aprovação" até o administrador liberar em 👥 Cadastros.
    A aprovação vale por e-mail (coleção "allowed"): a mesma pessoa nunca precisa ser aprovada duas vezes.
+8. Fotos de perfil: ficam na coleção "avatars" (um documento por pessoa, imagem JPEG reduzida a 256×256 px,
+   gravada no próprio Firestore — não precisa ativar o Firebase Storage). Acrescente ao firestore.rules,
+   dentro de "match /databases/{database}/documents { ... }", o bloco abaixo e publique:
+
+   match /avatars/{uid} {
+     function approved() {
+       return request.auth != null && request.auth.token.email_verified == true && (
+         request.auth.token.email == 'querino.neto@gmail.com' ||
+         (exists(/databases/$(database)/documents/allowed/$(request.auth.token.email)) &&
+          get(/databases/$(database)/documents/allowed/$(request.auth.token.email)).data.status == 'approved'));
+     }
+     allow read: if approved();
+     allow create, update: if approved() && request.auth.uid == uid
+       && request.resource.data.keys().hasOnly(['img','ts'])
+       && request.resource.data.img is string
+       && request.resource.data.img.size() < 200000
+       && request.resource.data.img.matches('data:image/jpeg;base64,[A-Za-z0-9+/=]+')
+       && request.resource.data.ts == request.time;
+     allow delete: if approved() && (request.auth.uid == uid || request.auth.token.email == 'querino.neto@gmail.com');
+   }
 -->
 <style>
 :root{color-scheme:light;--g:#02b05c;--gt:#027a3f;--on:#fff;--gd:#029a50;--gl:#e9f8f0;--bg:#fff;--card:#fff;--tx:#1d2b24;--mu:#5c6e64;--bd:#d3e5d9;--red:#b42318}
@@ -40,7 +60,11 @@ header small{display:block;font-weight:400;color:var(--mu);font-size:12px}
 .lnk{background:none;border:0;padding:0;color:var(--gt);text-decoration:underline;cursor:pointer;font-size:14px}
 .btn.sm{padding:3px 10px;font-size:13px}
 .btn.ghost.danger,.danger{color:var(--red)!important}
-.av{width:34px;height:34px;border-radius:50%;background:var(--g);color:var(--on);display:inline-flex;align-items:center;justify-content:center;font-weight:700;flex:none}
+.av{width:34px;height:34px;border-radius:50%;background:var(--g);color:var(--on);display:inline-flex;align-items:center;justify-content:center;font-weight:700;flex:none;overflow:hidden}
+.av img{width:100%;height:100%;object-fit:cover;display:block}
+.av.xl{width:128px;height:128px;font-size:52px}
+button.avb{background:none;border:0;padding:0;border-radius:50%;cursor:pointer;display:inline-flex}
+button.avb:focus-visible{outline:2px solid var(--g);outline-offset:2px}
 .wrap{max-width:1080px;margin:20px auto;padding:0 16px;display:grid;grid-template-columns:240px 1fr;gap:20px}
 aside .box,.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:14px}
 aside h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:var(--mu);letter-spacing:.06em}
@@ -122,7 +146,7 @@ const CONFIG={
 };
 const TYPES={topic:'💬 Tópico',poll:'📊 Enquete',reminder:'⏰ Lembrete'};
 const VIEWS={andamento:'📂 Em andamento',encerrados:'📦 Encerrados'};
-const S={user:null,topics:[],comments:{},votes:[],hist:[],view:'andamento',q:'',type:'all',sort:'act',auth:'in',fail:'',users:[],allowed:{},cur:null,draft:null};
+const S={user:null,avatars:{},topics:[],comments:{},votes:[],hist:[],view:'andamento',q:'',type:'all',sort:'act',auth:'in',fail:'',users:[],allowed:{},cur:null,draft:null};
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const rich=s=>e(s).replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>').replace(/(^|\s)@([\wÀ-ÿ.-]+)/g,'$1<span class="tag">@$2</span>');
 /* Segurança: tudo que vai dentro de onclick="..." passa por sid() (ids) ou ek() (e-mails) */
@@ -141,7 +165,10 @@ const isAdmin=()=>!!(S.user&&S.user.status=='ok'&&isAdm(S.user.email));
 const statusOf=(email,verified,p,a)=>!verified?'verify':
  isAdm(email)?'ok':
  a?(a.status=='approved'?'ok':'rejected'):(p&&p.approved===true?'ok':(p&&p.rejected?'rejected':'pending'));
-const av=u=>`<span class="av">${e((u.name||'?')[0].toUpperCase())}</span>`;
+/* Avatar: foto de perfil (se houver) ou a inicial do nome. u pode ser {uid,name} ou um perfil {id,name} */
+const IMG=/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/;
+const av=(u,c)=>{const id=u&&(u.uid||u.id),p=id&&S.avatars[id],k='av'+(c?' '+c:'');
+ return p?`<span class="${k}"><img src="${p}" alt="" loading="lazy"></span>`:`<span class="${k}">${e(((u&&u.name)||'?')[0].toUpperCase())}</span>`};
 $$('hl,pl').forEach(x=>x.src=LOGO);
 const seen=()=>{try{return JSON.parse(localStorage['seen_'+S.user.uid]||'{}')||{}}catch(x){return{}}};
 
@@ -154,7 +181,7 @@ if(typeof firebase==='undefined'||!CONFIG.firebase){
 firebase.initializeApp(CONFIG.firebase);
 const db=firebase.firestore(),col=db.collection('topics'),au=firebase.auth(),TS=()=>firebase.firestore.FieldValue.serverTimestamp();
 au.languageCode='pt-BR';
-let unsub=null,unsubC=null,unsubU=null,unsubP=null,unsubA=null,reg=false,wid=null,wun=[];
+let unsubV=null,unsub=null,unsubC=null,unsubU=null,unsubP=null,unsubA=null,reg=false,wid=null,wun=[];
 const saveFail=x=>alert('Não foi possível salvar: '+((x&&x.code=='permission-denied')?'sem permissão (verifique as regras do Firestore e se o item ainda está aberto).':((x&&x.message)||x)));
 const readFail=x=>{S.fail=x&&x.code=='permission-denied'?'Sem permissão para ler os dados. Verifique se o Firestore foi criado e se as regras foram publicadas.':'Falha ao carregar os dados: '+((x&&x.message)||x);render()};
 /* Datas vêm do servidor (Timestamp); aqui viram milissegundos */
@@ -164,7 +191,9 @@ const normT=d=>{const x=dat(d);x.ts=ms(x.ts);x.act=ms(x.act)||x.ts;
  ['archived','closed','done'].forEach(k=>{if(x[k]&&typeof x[k]=='object')x[k]={...x[k],at:ms(x[k].at)}});return x};
 const store={
  sub(){
-  unsub&&unsub();unsubC&&unsubC();
+  unsub&&unsub();unsubC&&unsubC();unsubV&&unsubV();
+  /* Fotos de perfil: só entram imagens JPEG em data URL válidas (nada de HTML ou outros esquemas) */
+  unsubV=db.collection('avatars').onSnapshot(s=>{const m={};s.docs.forEach(d=>{const x=d.data().img;if(typeof x=='string'&&IMG.test(x))m[d.id]=x});S.avatars=m;render()},()=>{});
   unsub=col.onSnapshot(s=>{S.fail='';S.topics=s.docs.map(normT);render()},readFail);
   unsubC=db.collectionGroup('comments').onSnapshot(s=>{
    const m={};
@@ -191,7 +220,7 @@ const store={
   ids.forEach(id=>b.update(db.collection('users').doc(id),ok?{approved:true,rejected:false}:{approved:false,rejected:true}));
   return b.commit().catch(x=>{if(!quiet)saveFail(x)})}
 };
-const stopData=()=>{unsub&&unsub();unsubC&&unsubC();unsubU&&unsubU();unsub=unsubC=unsubU=null;store.watch(null);S.topics=[];S.comments={};S.users=[];S.allowed={}};
+const stopData=()=>{unsub&&unsub();unsubC&&unsubC();unsubU&&unsubU();unsubV&&unsubV();unsub=unsubC=unsubU=unsubV=null;store.watch(null);S.avatars={};S.topics=[];S.comments={};S.users=[];S.allowed={}};
 /* Acompanha o perfil da pessoa em tempo real: quando o admin aprova, o acesso abre sozinho */
 function enter(u,name){
  unsubP&&unsubP();unsubA&&unsubA();
@@ -271,7 +300,7 @@ function render(){
  document.body.classList.toggle('anon',!ok);
  if(S.view=='cadastros'&&!isAdmin())S.view='andamento';
  $('q').style.display=ok?'':'none';
- $('me').innerHTML=ok?`<div style="display:flex;gap:10px;align-items:center">${av(S.user)}<b style="font-size:14px">${e(S.user.name.split(' ')[0])}</b><button class="btn ghost sm" onclick="auth.logout()">Sair</button></div>`:'';
+ $('me').innerHTML=ok?`<div style="display:flex;gap:10px;align-items:center"><button class="avb" title="Alterar foto de perfil" aria-label="Alterar foto de perfil" onclick="profile()">${av(S.user)}</button><b style="font-size:14px">${e(S.user.name.split(' ')[0])}</b><button class="btn ghost sm" onclick="auth.logout()">Sair</button></div>`:'';
  if(!S.user){
   S.cur=null;store.watch(null);
   const up=S.auth=='up',rs=S.auth=='reset';
@@ -327,7 +356,7 @@ const setUser=(k,st)=>{
  store.setAccess(g.email,st,g.docs.map(d=>d.id));
 };
 function usersPanel(){
- const row=(g,btns)=>`<div class="row urow" style="cursor:default">${av(g)}<div style="flex:1;min-width:150px"><h3>${e(g.name)}</h3><div class="meta" style="word-break:break-all">${e(g.email)}${g.created?' · cadastro em '+fmt(g.created):''}</div></div><div style="display:flex;gap:6px">${btns}</div></div>`;
+ const row=(g,btns)=>`<div class="row urow" style="cursor:default">${av({name:g.name,uid:(g.docs.find(d=>S.avatars[d.id])||g.docs[0]||{}).id})}<div style="flex:1;min-width:150px"><h3>${e(g.name)}</h3><div class="meta" style="word-break:break-all">${e(g.email)}${g.created?' · cadastro em '+fmt(g.created):''}</div></div><div style="display:flex;gap:6px">${btns}</div></div>`;
  const sec=(t,L,fn,empty)=>`<h3 style="margin:18px 0 8px">${t} <span class="meta">(${L.length})</span></h3><div class="card list">${L.length?L.map(fn).join(''):`<div class="empty" style="padding:18px">${empty}</div>`}</div>`;
  const k=g=>ek(g.email),rej=groups().filter(g=>g.status=='rejected');
  return `<h2 style="margin:0 0 4px">👥 Cadastros</h2><p class="meta" style="margin:0">Só quem for aprovado aqui (e tiver confirmado o e-mail) consegue ver e participar do portal.</p>
@@ -448,6 +477,46 @@ function compose(type){
  <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn" onclick="publish()">Publicar</button></div></div></div>`;
 }
 const closeM=()=>$('modal').innerHTML='';
+
+/* ---------- Foto de perfil ----------
+   A imagem é recortada em quadrado e reduzida a 256×256 px (JPEG) no próprio navegador
+   e gravada em avatars/{uid}. Nada é enviado antes de a pessoa escolher o arquivo. */
+function profile(){
+ const has=!!S.avatars[S.user.uid];
+ $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card" style="max-width:400px;text-align:center"><h3 style="margin-top:0">Foto de perfil</h3>
+ <div style="display:flex;justify-content:center;margin:10px 0">${av(S.user,'xl')}</div>
+ <p class="meta" style="margin:0 0 12px">A foto aparece ao lado do seu nome nos tópicos, comentários e no cabeçalho. Ela é recortada em quadrado e reduzida automaticamente.</p>
+ <input id="pf" type="file" accept="image/*" hidden onchange="setPhoto(this)">
+ <div id="err" class="err" style="margin:0 0 8px"></div>
+ <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+  <button class="btn" onclick="$('pf').click()">${has?'Trocar foto':'Escolher foto'}</button>
+  ${has?'<button class="btn ghost danger" onclick="delPhoto()">Remover foto</button>':''}
+  <button class="btn ghost" onclick="closeM()">Fechar</button></div></div></div>`;
+}
+const loadImg=f=>new Promise((ok,no)=>{const u=URL.createObjectURL(f),i=new Image();
+ i.onload=()=>{URL.revokeObjectURL(u);ok(i)};i.onerror=()=>{URL.revokeObjectURL(u);no(new Error('Não foi possível ler esta imagem. Use um arquivo JPG ou PNG.'))};i.src=u});
+async function setPhoto(inp){
+ const f=inp.files&&inp.files[0];inp.value='';if(!f)return;showErr('');
+ if(!/^image\//.test(f.type))return showErr('Escolha um arquivo de imagem.');
+ if(f.size>15e6)return showErr('Imagem grande demais (máx. 15 MB).');
+ try{
+  showErr('Enviando…',1);
+  const i=await loadImg(f),n=Math.min(i.naturalWidth,i.naturalHeight),c=document.createElement('canvas');
+  if(!n)throw new Error('Imagem inválida.');
+  c.width=c.height=256;const x=c.getContext('2d');
+  x.fillStyle='#fff';x.fillRect(0,0,256,256); /* PNG com transparência fica com fundo branco */
+  x.drawImage(i,(i.naturalWidth-n)/2,(i.naturalHeight-n)/2,n,n,0,0,256,256);
+  let d,q=.85;do{d=c.toDataURL('image/jpeg',q);q-=.15}while(d.length>150000&&q>.2);
+  if(!IMG.test(d)||d.length>=200000)throw new Error('Não foi possível processar a imagem.');
+  await db.collection('avatars').doc(S.user.uid).set({img:d,ts:TS()});
+  S.avatars[S.user.uid]=d;render();profile();
+ }catch(x){showErr(x&&x.code=='permission-denied'?'Sem permissão para salvar a foto (verifique se as regras da coleção "avatars" foram publicadas no Firestore).':msg(x))}
+}
+async function delPhoto(){
+ if(!confirm('Remover sua foto de perfil?'))return;
+ try{await db.collection('avatars').doc(S.user.uid).delete();delete S.avatars[S.user.uid];render();profile()}
+ catch(x){showErr(x&&x.code=='permission-denied'?'Sem permissão para remover a foto.':msg(x))}
+}
 function publish(){
  const title=$('nt').value.trim(),body=$('nb').value.trim();if(!title)return alert('Informe um título.');
  if(title.length>200||body.length>10000)return alert('Texto longo demais.');
