@@ -59,6 +59,10 @@ button.thumb{background:none;border:0;padding:0;cursor:pointer}button.thumb img{
 #mbox button.on,#mbox button:hover{background:var(--gl)}
 .cm.flash{background:var(--gl);border-radius:8px;box-shadow:0 0 0 6px var(--gl)}
 .cm>button{align-self:flex-start}
+.pick{max-height:200px;overflow:auto;border:1px solid var(--bd);border-radius:8px;padding:4px 10px;margin:5px 0}.pick label{display:flex;gap:8px;align-items:center;padding:4px 0;cursor:pointer}
+.who{display:inline-flex;gap:6px;align-items:center;background:var(--gl);border-radius:16px;padding:2px 10px 2px 2px;font-size:14px}
+.st{font-size:12px;padding:1px 8px;border-radius:10px;font-weight:700;white-space:nowrap;background:#eef1ef;color:var(--mu)}
+.st-doing{background:#e6efff;color:#1d4ed8}.st-done{background:var(--gl);color:var(--gt)}
 .removed{color:var(--mu);font-style:italic;margin:2px 0}
 .wrap{max-width:1080px;margin:20px auto;padding:0 16px;display:grid;grid-template-columns:240px 1fr;gap:20px}
 aside .box,.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:14px}
@@ -364,7 +368,7 @@ function render(){
  S.cur=t?t.id:null;
  if(t&&S.catt.tid&&S.catt.tid!==t.id)S.catt={tid:null,list:[]};
  if(t){const s=seen();s[t.id]=t.act||t.ts;try{localStorage['seen_'+S.user.uid]=JSON.stringify(s)}catch(x){}readFor(t.id)}
- $('app').innerHTML=`<div class="wrap"><aside>${side()}</aside><main>${t?detail(t):(S.view=='cadastros'&&isAdmin()?usersPanel():S.view=='mencoes'?mentionsPanel():list())}</main></div>`;
+ $('app').innerHTML=`<div class="wrap"><aside>${side()}</aside><main>${t?detail(t):(S.view=='cadastros'&&isAdmin()?usersPanel():S.view=='mencoes'?mentionsPanel():S.view=='minhas'?myTasks():list())}</main></div>`;
  /* mantém o comentário que estava sendo digitado quando chegam atualizações em tempo real */
  const c=$('ct');
  if(c&&S.draft&&S.draft.id==S.cur){c.value=S.draft.v;if(S.draft.f){c.focus();c.setSelectionRange(c.value.length,c.value.length)}}
@@ -441,16 +445,46 @@ setInterval(()=>{if(S.user&&S.user.status=='ok'&&S.topics.some(expired)){autoClo
 
 /* Encerrado = arquivado. Os campos antigos (closed/done) continuam sendo reconhecidos para itens já existentes. */
 const fin=t=>t.archived||t.closed||t.done||(expired(t)?{auto:true,at:t.ends,by:null,note:''}:null),arch=t=>!!fin(t),isRem=t=>t.type=='reminder';
+/* ---------- Tarefas: responsáveis e acompanhamento ----------
+   Novas tarefas guardam "assignees" (lista) e "aids" (uids, usados pelas regras); as antigas tinham um único "assignee". */
+const asg=t=>Array.isArray(t.assignees)?t.assignees.filter(a=>a&&a.uid):(t.assignee&&t.assignee.uid?[t.assignee]:[]);
+const isAsg=(t,uid)=>asg(t).some(a=>a.uid==uid);
+const STI={todo:'⚪',doing:'🔵',done:'✅',closed:'📦'},STL={todo:'A fazer',doing:'Em andamento',done:'Concluída',closed:'Encerrada'};
+const stOf=t=>t.status=='done'?'done':fin(t)?'closed':(t.status=='doing'?'doing':'todo');
+const stTag=t=>`<span class="st st-${stOf(t)}">${STI[stOf(t)]} ${STL[stOf(t)]}</span>`;
+/* Quem atualiza o status: os responsáveis; se não houver responsável, o autor */
+const canSt=t=>isRem(t)&&!arch(t)&&(asg(t).length?isAsg(t,S.user.uid):t.author.uid==S.user.uid);
+const names=(A,first)=>A.map(a=>e(first?N(a).split(' ')[0]:N(a))).join(', ');
+function setSt(id,st){
+ const t=T(id);if(!t||!canSt(t)||!STL[st]||stOf(t)==st)return;
+ const more=b=>{if(t.author.uid!=S.user.uid)notify(b,{tid:id,cid:null,title:t.title,text:STI[st]+' '+STL[st]},{all:false,uids:[]},{[t.author.uid]:'status'})};
+ if(st=='done'){
+  if(!confirm('Marcar a tarefa como concluída?\nEla será encerrada e arquivada (não dá para reabrir).'))return;
+  return act(id,{status:'done',archived:{by:who(),at:TS(),note:'Tarefa concluída.'}},'concluiu a tarefa',more)}
+ act(id,{status:st},`mudou o status para “${STL[st]}”`,more);
+}
+function myTasks(){
+ const me=S.user.uid,L=S.topics.filter(t=>isRem(t)&&isAsg(t,me)),byDue=(a,b)=>(a.due||'')>(b.due||'')?1:-1;
+ const row=t=>`<div class="row" onclick="go('t/${sid(t.id)}')">${av(t.author)}<div style="min-width:0"><h3>${e(t.title)}</h3>
+  <div class="meta">${stTag(t)}${t.due?` · prazo <span class="${!arch(t)&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''} · criada por ${e(N(t.author))}${asg(t).length>1?' · 👥 com '+names(asg(t).filter(a=>a.uid!=me),1):''}</div></div></div>`;
+ const sec=(title,A,empty)=>`<h3 style="margin:18px 0 8px">${title} <span class="meta">(${A.length})</span></h3><div class="card list">${A.length?A.map(row).join(''):`<div class="empty" style="padding:18px">${empty}</div>`}</div>`;
+ const fe=L.filter(t=>arch(t)).sort((a,b)=>fin(b).at-fin(a).at).slice(0,15);
+ return `<h2 style="margin:0 0 4px">📋 Minhas tarefas</h2><p class="meta" style="margin:0">Tarefas em que você é responsável. Abra uma tarefa para atualizar o status.</p>
+ ${sec('⚪ A fazer',L.filter(t=>stOf(t)=='todo').sort(byDue),'Nada a fazer 🎉')}
+ ${sec('🔵 Em andamento',L.filter(t=>stOf(t)=='doing').sort(byDue),'Nenhuma tarefa em andamento.')}
+ ${sec('✅ Concluídas e encerradas (recentes)',fe,'Nenhuma ainda.')}`;
+}
+const myOpen=()=>S.user?S.topics.filter(t=>isRem(t)&&!arch(t)&&isAsg(t,S.user.uid)).length:0;
 const inView=(t,v)=>v=='encerrados'?arch(t):!arch(t);
 function side(){
  const rem=S.topics.filter(t=>isRem(t)&&!arch(t)&&t.due).sort((a,b)=>a.due>b.due?1:-1).slice(0,4),un=unread();
  return `<button class="btn newbtn" style="width:100%;margin-bottom:14px" onclick="compose()">＋ Novo</button>
- <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}<button class="cat ${S.view=='mencoes'?'on':''}" onclick="S.view='mencoes';go('')">🔔 Menções${un?`<span class="tag">${un} nova(s)</span>`:''}</button>${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pendU().length?`<span class="tag">${pendU().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
- <div class="box rem-box"><h4>📋 Próximos prazos</h4>${rem.length?rem.map(r=>`<div style="margin:6px 0;cursor:pointer" onclick="go('t/${sid(r.id)}')"><b>${e(r.title)}</b><div class="meta ${r.due<today()?'due':''}">${r.due<today()?'Vencida · ':''}${fd(r.due)}${r.assignee?' · '+e(N(r.assignee).split(' ')[0]):''}</div></div>`).join(''):'<span class="meta">Nenhuma tarefa pendente 🎉</span>'}</div>`;
+ <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}<button class="cat ${S.view=='minhas'?'on':''}" onclick="S.view='minhas';go('')">📋 Minhas tarefas${myOpen()?`<span class="tag">${myOpen()}</span>`:''}</button><button class="cat ${S.view=='mencoes'?'on':''}" onclick="S.view='mencoes';go('')">🔔 Menções${un?`<span class="tag">${un} nova(s)</span>`:''}</button>${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pendU().length?`<span class="tag">${pendU().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
+ <div class="box rem-box"><h4>📋 Próximos prazos</h4>${rem.length?rem.map(r=>`<div style="margin:6px 0;cursor:pointer" onclick="go('t/${sid(r.id)}')"><b>${e(r.title)}</b><div class="meta ${r.due<today()?'due':''}">${r.due<today()?'Vencida · ':''}${fd(r.due)}${asg(r).length?' · '+names(asg(r),1):''} · ${STI[stOf(r)]}</div></div>`).join(''):'<span class="meta">Nenhuma tarefa pendente 🎉</span>'}</div>`;
 }
 function list(){
  const q=S.q.toLowerCase(),v=S.view,sd=seen();
- let L=S.topics.filter(t=>inView(t,v)&&(S.type=='all'||t.type==S.type)&&(!q||((t.title||'')+(t.body||'')+N(t.author)+cmts(t).map(c=>c.text||'').join(' ')+(t.files||[]).map(f=>f&&f.name).join(' ')).toLowerCase().includes(q)));
+ let L=S.topics.filter(t=>inView(t,v)&&(S.type=='all'||t.type==S.type)&&(!q||((t.title||'')+(t.body||'')+N(t.author)+asg(t).map(N).join(' ')+cmts(t).map(c=>c.text||'').join(' ')+(t.files||[]).map(f=>f&&f.name).join(' ')).toLowerCase().includes(q)));
  L.sort((a,b)=>v=='encerrados'?fin(b).at-fin(a).at:(b.pinned?1:0)-(a.pinned?1:0)||(S.type=='reminder'?(a.due>b.due?1:-1):S.sort=='act'?(b.act||b.ts)-(a.act||a.ts):b.ts-a.ts));
  const open=S.topics.filter(t=>!arch(t)),venc=open.filter(t=>isRem(t)&&t.due<today()).length;
  return `${S.fail?`<div class="banner err">⚠ ${e(S.fail)}</div>`:''}${isAdmin()&&pendU().length?`<div class="banner">👥 <b>${pendU().length}</b> cadastro(s) aguardando sua aprovação. <button class="lnk" onclick="S.view='cadastros';go('')">Revisar agora</button></div>`:''}${unread()?`<div class="banner">🔔 Você tem <b>${unread()}</b> menção(ões) não lida(s). <button class="lnk" onclick="S.view='mencoes';go('')">Ver agora</button></div>`:''}<div class="stat noprint"><div><b>${open.length}</b>em andamento</div><div><b>${open.filter(isRem).length}</b>tarefas</div><div><b class="${venc?'due':''}">${venc}</b>vencidas</div><div><b>${open.filter(t=>t.type=='poll').length}</b>enquetes abertas</div></div>
@@ -459,7 +493,7 @@ function list(){
  </div>
  <div class="card list">${L.length?L.map(t=>{const un=(t.act||t.ts)>(sd[t.id]||0)&&t.author.uid!=S.user.uid||(t.act||t.ts)>(sd[t.id]||0)&&sd[t.id],f=fin(t),nf=Array.isArray(t.files)?t.files.length:0;
  return `<div class="row" onclick="go('t/${sid(t.id)}')">${un?'<span class="dot" title="Novidades"></span>':'<span style="width:9px"></span>'}${av(t.author)}<div><h3>${t.pinned?'📌 ':''}${e(t.title)}</h3>
- <div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${t.assignee?' · 👤 '+e(N(t.assignee)):''}${!f&&t.ends?` · ⏳ até ${fmt(t.ends)}`:''}${nf?` · 📎 ${nf}`:''}${f?` · 📦 ${f.auto?'prazo encerrado':e(N(f.by))}, ${fmt(f.at)}`:''}</div></div>
+ <div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${isRem(t)?' · '+STI[stOf(t)]+' '+STL[stOf(t)]:''}${asg(t).length?' · 👥 '+names(asg(t)):''}${!f&&t.ends?` · ⏳ até ${fmt(t.ends)}`:''}${nf?` · 📎 ${nf}`:''}${f?` · 📦 ${f.auto?'prazo encerrado':e(N(f.by))}, ${fmt(f.at)}`:''}</div></div>
  <div class="stats">${t.type=='poll'?'':`💬 ${cmts(t).length}`}</div></div>`}).join(''):'<div class="empty">Nada por aqui ainda.</div>'}</div>`;
 }
 /* ---------- Anexos (PDF e imagens) ----------
@@ -593,7 +627,7 @@ function openN(id){
 }
 function readAll(){const b=db.batch();S.notifs.filter(n=>!n.read).forEach(n=>b.update(notifCol(S.user.uid).doc(n.id),{read:true}));b.commit().catch(saveFail)}
 function mentionsPanel(){
- const L=S.notifs,un=unread(),lab=n=>n.kind=='assign'?'atribuiu a você a tarefa':n.kind=='all'?'mencionou @todos em':'mencionou você em';
+ const L=S.notifs,un=unread(),lab=n=>n.kind=='status'?'atualizou o status da tarefa':n.kind=='assign'?'atribuiu a você a tarefa':n.kind=='all'?'mencionou @todos em':'mencionou você em';
  return `<h2 style="margin:0 0 4px">🔔 Menções</h2><p class="meta" style="margin:0 0 10px">Os lugares em que você foi mencionado(a) com @, as menções a @todos e as tarefas atribuídas a você. Clique para ir direto ao ponto.${un?` <button class="lnk" onclick="readAll()">Marcar todas como lidas</button>`:''}</p>
  <div class="card list">${L.length?L.map(n=>`<div class="row" onclick="openN('${sid(n.id)}')">${n.read?'<span style="width:9px;flex:none"></span>':'<span class="dot" title="Não lida"></span>'}${av(n.from)}<div style="min-width:0"><h3 style="font-weight:${n.read?400:700}">${e(N(n.from))} ${lab(n)} “${e(n.title)}”</h3>${n.text?`<div class="meta">${n.cid?'💬 ':''}${e(n.text)}</div>`:''}<div class="meta">${ago(n.ts)}</div></div></div>`).join(''):'<div class="empty">Nenhuma menção ainda.</div>'}</div>`;
 }
@@ -609,7 +643,7 @@ const composerC=i0=>{const L=S.catt.tid==S.cur?S.catt.list:[];
  <p class="meta" style="margin:6px 0 0">Depois de publicado, o comentário não pode ser apagado por você.</p></div>`};
 function detail(t){
  const u=S.user,off=arch(t),f=fin(t),cm=cmts(t),i0=sid(t.id),
-  can=isAdmin()||t.author.uid==u.uid||(!isRem(t)?false:!!(t.assignee&&t.assignee.uid==u.uid));
+  can=isAdmin()||t.author.uid==u.uid;
  let extra='';
  if(t.type=='poll'){
   const opts=t.options||[],vs=S.votes,
@@ -619,8 +653,11 @@ function detail(t){
    +opts.map((o,i)=>{const n=nm(i).length,me=mine.includes(i)||legV(o).some(x=>String(x).startsWith(u.uid+'|'));
     return `<button class="opt ${me?'me':''}" ${off?'disabled':''} onclick="vote('${i0}',${i})"><i style="width:${part?n/part*100:0}%"></i><span>${t.multi?(me?'☑ ':'☐ '):''}${e(o.t)}<b>${n} voto(s)</b></span></button>`}).join('')
    +`<div class="meta">${part} participante(s) · votos nominais${opts.map((o,i)=>nm(i).length?`<br>${e(o.t)}: ${nm(i).map(x=>e(x)).join(', ')}`:'').join('')}</div>`}
- if(isRem(t))extra=`<p>📅 Prazo: <b class="${!off&&t.due<today()?'due':''}">${fd(t.due)}</b>${t.assignee?` · 👤 Responsável: <b>${e(N(t.assignee))}</b>`:''}</p>
-  ${off||!can?'':`<button class="btn" onclick="finish('${i0}','Tarefa concluída.')">✔ Marcar como concluída</button>`}`;
+ if(isRem(t)){const A=asg(t),st=stOf(t);
+  extra=`<p style="margin:6px 0">📅 Prazo: <b class="${!off&&t.due<today()?'due':''}">${fd(t.due)}</b></p>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0">👥 Responsáveis: ${A.length?A.map(a=>`<span class="who">${av(a,'sm')} ${e(N(a))}</span>`).join(''):'<span class="meta">ninguém (o autor acompanha)</span>'}</div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 4px"><b>Status:</b> ${canSt(t)?['todo','doing','done'].map(k=>`<button class="btn sm ${st==k?'':'ghost'}" onclick="setSt('${i0}','${k}')">${STI[k]} ${STL[k]}</button>`).join(''):stTag(t)}</div>
+  ${!off&&!canSt(t)?`<p class="meta" style="margin:0">Só ${A.length?'os responsáveis atualizam':'o autor atualiza'} o status desta tarefa.</p>`:''}`}
  const note=f?(f.note||(t.type=='poll'&&f.auto?pollResult(t,S.votes):'')):'';
  const hl=[...legacyH(t),...S.hist].sort((a,b)=>a.ts-b.ts).reverse(),
   hist=hl.map(h=>`<div class="h"><b>${e(typeof h.by=='string'?h.by:N(h.by))}</b> ${e(h.txt)} <span class="meta">· ${fmt(h.ts)}</span></div>`).join('');
@@ -726,8 +763,9 @@ function compose(type){
  <div style="display:flex;gap:16px;flex-wrap:wrap;margin:6px 0"><label><input type="radio" name="mu" value="0" checked> Escolha única</label><label><input type="radio" name="mu" value="1"> Múltipla escolha</label></div>
  <label class="meta">Encerrar automaticamente em (opcional)</label><input id="ne" type="datetime-local" class="f">
  <p class="meta" style="margin:0">Ao encerrar (no prazo ou manualmente), a conclusão será a opção mais votada. Enquetes não recebem comentários.</p>`:''}
- ${ctype=='reminder'?`<label class="meta" style="display:block;margin-top:10px">Prazo</label><input id="nd" type="date" class="f"><label class="meta">Atribuir a (opcional)</label>
- <select id="na" class="f"><option value="">— ninguém —</option>${dir().map(([i,n])=>`<option value="${e(i)}">${e(n)}${i==S.user.uid?' (você)':''}</option>`).join('')}</select>`:''}
+ ${ctype=='reminder'?`<label class="meta" style="display:block;margin-top:10px">Prazo</label><input id="nd" type="date" class="f"><label class="meta">Responsáveis (opcional; marque uma ou mais pessoas)</label>
+ <div class="pick">${dir().map(([i,n])=>`<label><input type="checkbox" name="na" value="${e(i)}"> ${av({uid:i,name:n},'sm')} ${e(n)}${i==S.user.uid?' <span class="meta">(você)</span>':''}</label>`).join('')||'<span class="meta">Nenhuma pessoa no diretório ainda.</span>'}</div>
+ <p class="meta" style="margin:0">Só os responsáveis atualizam o status (a fazer, em andamento, concluída). Sem responsável, quem atualiza é você.</p>`:''}
  <p class="meta">Atenção: depois de publicado, o item não pode ser editado.</p>
  <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn" id="pbtn" onclick="publish()">Publicar</button></div></div></div>`;
  if(keep){$('nt').value=keep.t;$('nb').value=keep.b}
@@ -742,8 +780,9 @@ async function publish(){
  let extra=null;
  if(ctype=='reminder'){
   if(!$('nd').value)return alert('Informe o prazo.');o.due=$('nd').value;
-  const a=$('na').value;o.assignee=a&&S.people[a]?{uid:a,name:S.people[a].name}:null;
-  if(o.assignee)extra={[a]:'assign'}}
+  const ids=[...document.querySelectorAll('input[name="na"]:checked')].map(x=>x.value).filter(i=>S.people[i]).slice(0,20);
+  o.assignees=ids.map(i=>({uid:i,name:S.people[i].name}));o.aids=ids;o.status='todo';
+  if(ids.length){extra={};ids.forEach(i=>extra[i]='assign')}}
  if(ctype=='poll'){
   const op=$('no').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(op.length<2)return alert('Informe ao menos 2 opções.');

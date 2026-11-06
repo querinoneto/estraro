@@ -37,6 +37,13 @@ service cloud.firestore {
     // Enquete ainda dentro do prazo (ou sem prazo)
     function beforeEnd(t) { return t.get('ends', null) == null || request.time < t.ends; }
     function topic(id) { return get(/databases/$(database)/documents/topics/$(id)).data; }
+    // Responsável pela tarefa: está na lista "aids"; nas tarefas antigas, o único "assignee";
+    // sem nenhum responsável, o próprio autor
+    function taskOwner(t) {
+      return (request.auth.uid in t.get('aids', []))
+        || (t.get('aids', []).size() == 0 && t.get('assignee', null) != null && t.assignee.uid == request.auth.uid)
+        || (t.get('aids', []).size() == 0 && t.get('assignee', null) == null && t.author.uid == request.auth.uid);
+    }
 
     // ---------- Perfis ----------
     match /users/{uid} {
@@ -95,7 +102,7 @@ service cloud.firestore {
       // Qualquer pessoa com acesso pode notificar outra, sempre em seu próprio nome
       allow create: if approved()
         && request.resource.data.keys().hasOnly(['kind', 'from', 'tid', 'cid', 'title', 'text', 'ts', 'read'])
-        && request.resource.data.kind in ['mention', 'all', 'assign']
+        && request.resource.data.kind in ['mention', 'all', 'assign', 'status']
         && isMe(request.resource.data.from)
         && request.resource.data.tid is string
         && (request.resource.data.cid == null || request.resource.data.cid is string)
@@ -140,7 +147,7 @@ service cloud.firestore {
       allow read: if approved();
 
       allow create: if approved()
-        && request.resource.data.keys().hasOnly(['type', 'title', 'body', 'author', 'ts', 'act', 'pinned', 'archived', 'due', 'assignee', 'options', 'multi', 'ends', 'files'])
+        && request.resource.data.keys().hasOnly(['type', 'title', 'body', 'author', 'ts', 'act', 'pinned', 'archived', 'due', 'assignee', 'assignees', 'aids', 'status', 'options', 'multi', 'ends', 'files'])
         && request.resource.data.type in ['topic', 'poll', 'reminder']
         && request.resource.data.title is string
         && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 200
@@ -159,12 +166,22 @@ service cloud.firestore {
              && request.resource.data.get('multi', false) is bool
              && (request.resource.data.get('ends', null) == null
                  || (request.resource.data.ends is timestamp && request.resource.data.ends > request.time))))
-        && (request.resource.data.type != 'reminder' || request.resource.data.due is string);
+        && (request.resource.data.type != 'reminder' || (
+             request.resource.data.due is string
+             && request.resource.data.get('status', 'todo') == 'todo'
+             && request.resource.data.get('aids', []) is list
+             && request.resource.data.get('aids', []).size() <= 20
+             && request.resource.data.get('assignees', []) is list
+             && request.resource.data.get('assignees', []).size() <= 20));
 
       // Toda ação atualiza "act" (hora do servidor). Fixar: só admin.
+      // Status da tarefa (a fazer / em andamento / concluída): só os responsáveis.
       // Encerrar: autor, responsável pela tarefa ou admin; enquetes com prazo vencido: qualquer pessoa (encerramento automático).
       allow update: if approved() && isOpen(resource.data)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['act', 'pinned', 'archived'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['act', 'pinned', 'archived', 'status'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+            || (resource.data.type == 'reminder' && taskOwner(resource.data)
+                && request.resource.data.status in ['todo', 'doing', 'done']))
         && request.resource.data.act == request.time
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['pinned'])
             || (isAdmin() && request.resource.data.pinned is bool))
@@ -178,6 +195,7 @@ service cloud.firestore {
              && (isAdmin()
                  || resource.data.author.uid == request.auth.uid
                  || (resource.data.get('assignee', null) != null && resource.data.assignee.uid == request.auth.uid)
+                 || (request.auth.uid in resource.data.get('aids', []))
                  || (resource.data.type == 'poll' && resource.data.get('ends', null) != null
                      && request.time >= resource.data.ends))));
 
