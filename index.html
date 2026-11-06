@@ -19,25 +19,7 @@ CONFIGURAÇÃO (objeto CONFIG no início do script):
    TODOS os cadastros precisam confirmar o e-mail; os não-admin também ficam "aguardando aprovação" até o administrador liberar em 👥 Cadastros.
    A aprovação vale por e-mail (coleção "allowed"): a mesma pessoa nunca precisa ser aprovada duas vezes.
 8. Fotos de perfil: ficam na coleção "avatars" (um documento por pessoa, imagem JPEG reduzida a 256×256 px,
-   gravada no próprio Firestore — não precisa ativar o Firebase Storage). Acrescente ao firestore.rules,
-   dentro de "match /databases/{database}/documents { ... }", o bloco abaixo e publique:
-
-   match /avatars/{uid} {
-     function approved() {
-       return request.auth != null && request.auth.token.email_verified == true && (
-         request.auth.token.email == 'querino.neto@gmail.com' ||
-         (exists(/databases/$(database)/documents/allowed/$(request.auth.token.email)) &&
-          get(/databases/$(database)/documents/allowed/$(request.auth.token.email)).data.status == 'approved'));
-     }
-     allow read: if approved();
-     allow create, update: if approved() && request.auth.uid == uid
-       && request.resource.data.keys().hasOnly(['img','ts'])
-       && request.resource.data.img is string
-       && request.resource.data.img.size() < 200000
-       && request.resource.data.img.matches('data:image/jpeg;base64,[A-Za-z0-9+/=]+')
-       && request.resource.data.ts == request.time;
-     allow delete: if approved() && (request.auth.uid == uid || request.auth.token.email == 'querino.neto@gmail.com');
-   }
+   gravada no próprio Firestore — não precisa ativar o Firebase Storage). As regras já estão no firestore.rules.
 -->
 <style>
 :root{color-scheme:light;--g:#02b05c;--gt:#027a3f;--on:#fff;--gd:#029a50;--gl:#e9f8f0;--bg:#fff;--card:#fff;--tx:#1d2b24;--mu:#5c6e64;--bd:#d3e5d9;--red:#b42318}
