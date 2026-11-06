@@ -28,10 +28,14 @@ service cloud.firestore {
         && p.name is string && p.name.size() > 0 && p.name.size() <= 80;
     }
 
+    function validName(n) { return n is string && n.size() >= 2 && n.size() <= 80; }
+
     // Item ainda aberto (não encerrado/arquivado; campos antigos closed/done também contam)
     function isOpen(t) {
       return t.get('archived', null) == null && t.get('closed', null) == null && t.get('done', null) == null;
     }
+    // Enquete ainda dentro do prazo (ou sem prazo)
+    function beforeEnd(t) { return t.get('ends', null) == null || request.time < t.ends; }
     function topic(id) { return get(/databases/$(database)/documents/topics/$(id)).data; }
 
     // ---------- Perfis ----------
@@ -41,13 +45,15 @@ service cloud.firestore {
       // Cadastro: só o próprio perfil, sempre como "não aprovado"
       allow create: if signedIn() && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(['name', 'email', 'created', 'approved'])
-        && request.resource.data.name is string
-        && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 80
+        && validName(request.resource.data.name)
         && request.resource.data.email == myEmail()
         && request.resource.data.approved == false;
-      // Aprovar / recusar: só o admin
-      allow update: if isAdmin()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['approved', 'rejected']);
+      // Aprovar / recusar: só o admin. Renomear: a própria pessoa (só o nome).
+      allow update: if (isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['approved', 'rejected']))
+        || (signedIn() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+          && validName(request.resource.data.name));
       allow delete: if isAdmin();
     }
 
@@ -55,6 +61,16 @@ service cloud.firestore {
     match /allowed/{email} {
       allow read: if isAdmin() || (signedIn() && myEmail() == email);
       allow write: if isAdmin();
+    }
+
+    // ---------- Diretório de pessoas com acesso (nome atual; usado em menções e tarefas) ----------
+    match /people/{uid} {
+      allow read: if approved();
+      allow create, update: if approved() && (request.auth.uid == uid || isAdmin())
+        && request.resource.data.keys().hasOnly(['name', 'ts'])
+        && validName(request.resource.data.name)
+        && request.resource.data.ts == request.time;
+      allow delete: if isAdmin();
     }
 
     // ---------- Fotos de perfil ----------
@@ -69,17 +85,62 @@ service cloud.firestore {
       allow delete: if approved() && (request.auth.uid == uid || isAdmin());
     }
 
+    // ---------- Notificações (menções, @todos e tarefas atribuídas) ----------
+    match /notifs/{uid}/items/{nid} {
+      // Só a própria pessoa lê, marca como lida e apaga as suas
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+        && request.resource.data.read is bool;
+      // Qualquer pessoa com acesso pode notificar outra, sempre em seu próprio nome
+      allow create: if approved()
+        && request.resource.data.keys().hasOnly(['kind', 'from', 'tid', 'cid', 'title', 'text', 'ts', 'read'])
+        && request.resource.data.kind in ['mention', 'all', 'assign']
+        && isMe(request.resource.data.from)
+        && request.resource.data.tid is string
+        && (request.resource.data.cid == null || request.resource.data.cid is string)
+        && request.resource.data.title is string && request.resource.data.title.size() <= 200
+        && request.resource.data.text is string && request.resource.data.text.size() <= 200
+        && request.resource.data.ts == request.time
+        && request.resource.data.read == false;
+    }
+
+    // ---------- Anexos (PDF e imagens), guardados em pedaços ----------
+    match /files/{fid} {
+      allow read: if approved();
+      allow create: if approved()
+        && request.resource.data.keys().hasOnly(['name', 'type', 'size', 'owner', 'n', 'ts'])
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.type in ['application/pdf', 'image/jpeg', 'image/png']
+        && request.resource.data.name is string && request.resource.data.name.size() <= 200
+        && request.resource.data.size is int && request.resource.data.size <= 10485760
+        && request.resource.data.n is int && request.resource.data.n >= 1 && request.resource.data.n <= 20
+        && request.resource.data.ts == request.time;
+      allow update: if false;
+      allow delete: if isAdmin();
+
+      match /chunks/{k} {
+        allow read: if approved();
+        allow create: if approved()
+          && get(/databases/$(database)/documents/files/$(fid)).data.owner == request.auth.uid
+          && request.resource.data.keys().hasOnly(['d'])
+          && request.resource.data.d is string && request.resource.data.d.size() <= 700000;
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+    }
+
     // ---------- Comentários (leitura por consulta de grupo de coleções) ----------
     match /{path=**}/comments/{cid} {
       allow read: if approved();
     }
 
-    // ---------- Itens: tópicos, enquetes e lembretes ----------
+    // ---------- Itens: tópicos, enquetes e tarefas ("reminder") ----------
     match /topics/{tid} {
       allow read: if approved();
 
       allow create: if approved()
-        && request.resource.data.keys().hasOnly(['type', 'title', 'body', 'author', 'ts', 'act', 'pinned', 'archived', 'due', 'assignee', 'options'])
+        && request.resource.data.keys().hasOnly(['type', 'title', 'body', 'author', 'ts', 'act', 'pinned', 'archived', 'due', 'assignee', 'options', 'multi', 'ends', 'files'])
         && request.resource.data.type in ['topic', 'poll', 'reminder']
         && request.resource.data.title is string
         && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 200
@@ -89,56 +150,73 @@ service cloud.firestore {
         && request.resource.data.act == request.time
         && request.resource.data.pinned == false
         && request.resource.data.archived == null
+        && request.resource.data.get('files', []) is list
+        && request.resource.data.get('files', []).size() <= 5
         && (request.resource.data.type != 'poll' || (
              request.resource.data.options is list
              && request.resource.data.options.size() >= 2
-             && request.resource.data.options.size() <= 20))
+             && request.resource.data.options.size() <= 20
+             && request.resource.data.get('multi', false) is bool
+             && (request.resource.data.get('ends', null) == null
+                 || (request.resource.data.ends is timestamp && request.resource.data.ends > request.time))))
         && (request.resource.data.type != 'reminder' || request.resource.data.due is string);
 
-      // Toda ação atualiza "act" (hora do servidor). Fixar: só admin. Encerrar: autor, responsável ou admin.
+      // Toda ação atualiza "act" (hora do servidor). Fixar: só admin.
+      // Encerrar: autor, responsável pela tarefa ou admin; enquetes com prazo vencido: qualquer pessoa (encerramento automático).
       allow update: if approved() && isOpen(resource.data)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['act', 'pinned', 'archived'])
         && request.resource.data.act == request.time
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['pinned'])
             || (isAdmin() && request.resource.data.pinned is bool))
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['archived']) || (
-             (isAdmin()
-              || resource.data.author.uid == request.auth.uid
-              || (resource.data.get('assignee', null) != null && resource.data.assignee.uid == request.auth.uid))
-             && request.resource.data.archived is map
-             && request.resource.data.archived.keys().hasOnly(['by', 'at', 'note'])
+             request.resource.data.archived is map
+             && request.resource.data.archived.keys().hasOnly(['by', 'at', 'note', 'auto'])
              && isMe(request.resource.data.archived.by)
              && request.resource.data.archived.at == request.time
              && request.resource.data.archived.note is string
-             && request.resource.data.archived.note.size() <= 2000));
+             && request.resource.data.archived.note.size() <= 2000
+             && (isAdmin()
+                 || resource.data.author.uid == request.auth.uid
+                 || (resource.data.get('assignee', null) != null && resource.data.assignee.uid == request.auth.uid)
+                 || (resource.data.type == 'poll' && resource.data.get('ends', null) != null
+                     && request.time >= resource.data.ends))));
 
       allow delete: if isAdmin();
 
-      // Comentários
+      // Comentários: enquetes não recebem; ninguém apaga o próprio.
+      // Só o admin "remove" (o texto some e fica o aviso de remoção) ou apaga junto com o item.
       match /comments/{cid} {
         allow read: if approved();
-        allow create: if approved() && isOpen(topic(tid))
-          && request.resource.data.keys().hasOnly(['author', 'text', 'ts'])
+        allow create: if approved() && isOpen(topic(tid)) && topic(tid).type != 'poll'
+          && request.resource.data.keys().hasOnly(['author', 'text', 'files', 'ts'])
           && isMe(request.resource.data.author)
-          && request.resource.data.text is string
-          && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 5000
+          && request.resource.data.text is string && request.resource.data.text.size() <= 5000
+          && request.resource.data.get('files', []) is list
+          && request.resource.data.get('files', []).size() <= 5
+          && (request.resource.data.text.size() > 0 || request.resource.data.get('files', []).size() > 0)
           && request.resource.data.ts == request.time;
-        allow update: if false;
-        allow delete: if isAdmin()
-          || (approved() && resource.data.author.uid == request.auth.uid && isOpen(topic(tid)));
+        allow update: if isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'files', 'removed'])
+          && request.resource.data.text == ''
+          && request.resource.data.removed is map;
+        allow delete: if isAdmin();
       }
 
-      // Votos: um documento por pessoa (id = uid)
+      // Votos: um documento por pessoa (id = uid), com a lista de opções escolhidas
       match /votes/{uid} {
         allow read: if approved();
-        allow create, update: if approved() && request.auth.uid == uid && isOpen(topic(tid))
-          && topic(tid).type == 'poll'
-          && request.resource.data.keys().hasOnly(['name', 'opt', 'ts'])
+        allow create, update: if approved() && request.auth.uid == uid
+          && topic(tid).type == 'poll' && isOpen(topic(tid)) && beforeEnd(topic(tid))
+          && request.resource.data.keys().hasOnly(['name', 'opts', 'ts'])
           && request.resource.data.name is string && request.resource.data.name.size() <= 80
-          && request.resource.data.opt is int
-          && request.resource.data.opt >= 0 && request.resource.data.opt < topic(tid).options.size()
+          && request.resource.data.opts is list
+          && request.resource.data.opts.size() >= 1
+          && (request.resource.data.opts.size() == 1
+              || (topic(tid).get('multi', false) == true
+                  && request.resource.data.opts.size() <= topic(tid).options.size()))
           && request.resource.data.ts == request.time;
-        allow delete: if isAdmin() || (approved() && request.auth.uid == uid && isOpen(topic(tid)));
+        allow delete: if isAdmin()
+          || (approved() && request.auth.uid == uid && isOpen(topic(tid)) && beforeEnd(topic(tid)));
       }
 
       // Histórico: só acrescentar (gravado junto com a ação); apagar só o admin

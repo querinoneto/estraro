@@ -18,8 +18,9 @@ CONFIGURAÇÃO (objeto CONFIG no início do script):
 7. O administrador (CONFIG.admins) deve criar a conta e confirmar o e-mail pelo link recebido.
    TODOS os cadastros precisam confirmar o e-mail; os não-admin também ficam "aguardando aprovação" até o administrador liberar em 👥 Cadastros.
    A aprovação vale por e-mail (coleção "allowed"): a mesma pessoa nunca precisa ser aprovada duas vezes.
-8. Fotos de perfil: ficam na coleção "avatars" (um documento por pessoa, imagem JPEG reduzida a 256×256 px,
-   gravada no próprio Firestore — não precisa ativar o Firebase Storage). As regras já estão no firestore.rules.
+8. Fotos de perfil (coleção "avatars"), diretório de pessoas ("people"), menções/notificações ("notifs")
+   e anexos em PDF/imagem ("files", guardados em pedaços no próprio Firestore — não precisa do Firebase Storage).
+   Tudo isso já está coberto pelo firestore.rules: basta colar e publicar a versão mais recente.
 -->
 <style>
 :root{color-scheme:light;--g:#02b05c;--gt:#027a3f;--on:#fff;--gd:#029a50;--gl:#e9f8f0;--bg:#fff;--card:#fff;--tx:#1d2b24;--mu:#5c6e64;--bd:#d3e5d9;--red:#b42318}
@@ -47,6 +48,18 @@ header small{display:block;font-weight:400;color:var(--mu);font-size:12px}
 .av.xl{width:128px;height:128px;font-size:52px}
 button.avb{background:none;border:0;padding:0;border-radius:50%;cursor:pointer;display:inline-flex}
 button.avb:focus-visible{outline:2px solid var(--g);outline-offset:2px}
+.av.sm{width:26px;height:26px;font-size:12px}
+.bell{position:relative;font-size:16px;padding:3px 9px}.bell .n{position:absolute;top:-7px;right:-7px;background:var(--red);color:#fff;border-radius:10px;font-size:11px;line-height:16px;min-width:16px;padding:0 4px;font-weight:700}
+.att{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.att:empty{display:none}
+.chip{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--bd);border-radius:8px;padding:5px 10px;background:var(--card);color:var(--tx);cursor:pointer;font-size:14px;max-width:100%;word-break:break-all;text-align:left}
+.chip:hover{border-color:var(--g)}
+button.thumb{background:none;border:0;padding:0;cursor:pointer}button.thumb img{width:140px;height:105px;object-fit:cover;border-radius:8px;border:1px solid var(--bd);display:block}
+#mbox{position:fixed;z-index:20;background:#fff;border:1px solid var(--bd);border-radius:10px;box-shadow:0 6px 18px #0003;max-height:260px;overflow:auto;min-width:240px;max-width:calc(100vw - 16px)}
+#mbox button{display:flex;gap:8px;align-items:center;width:100%;border:0;background:none;padding:7px 10px;text-align:left;cursor:pointer;color:var(--tx);line-height:1.25}
+#mbox button.on,#mbox button:hover{background:var(--gl)}
+.cm.flash{background:var(--gl);border-radius:8px;box-shadow:0 0 0 6px var(--gl)}
+.cm>button{align-self:flex-start}
+.removed{color:var(--mu);font-style:italic;margin:2px 0}
 .wrap{max-width:1080px;margin:20px auto;padding:0 16px;display:grid;grid-template-columns:240px 1fr;gap:20px}
 aside .box,.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:14px}
 aside h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:var(--mu);letter-spacing:.06em}
@@ -102,13 +115,14 @@ body.anon header{display:none}.printhead{display:none}
 <body>
 <header>
  <div class="logo" onclick="go('')"><img id="hl" alt="Liga Brasileira de Esperanto"><span class="sep"></span><div>Portal da Diretoria<small>espaço interno</small></div></div>
- <input id="q" placeholder="Buscar em tudo…" oninput="S.q=this.value;if(location.hash)go('');else render();$('q').focus()">
+ <input id="q" placeholder="Buscar" oninput="S.q=this.value;if(location.hash)go('');else render();$('q').focus()">
  <div id="me"></div>
 </header>
 <div class="printhead"><img id="pl" alt="Liga Brasileira de Esperanto"></div>
 <div id="app"></div>
 <button class="btn fab" aria-label="Novo item" onclick="compose()">＋</button>
 <div id="modal"></div>
+<div id="mbox" role="listbox" hidden></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -126,11 +140,18 @@ const CONFIG={
  },
  admins:['querino.neto@gmail.com'] // administradores: aprovam cadastros e podem fixar/encerrar/apagar qualquer item. Mantenha igual ao e-mail nas regras do Firestore.
 };
-const TYPES={topic:'💬 Tópico',poll:'📊 Enquete',reminder:'⏰ Lembrete'};
+/* "reminder" é o nome interno das tarefas (mantido para os itens já existentes continuarem funcionando) */
+const TYPES={topic:'💬 Tópico',poll:'📊 Enquete',reminder:'📋 Tarefa'};
 const VIEWS={andamento:'📂 Em andamento',encerrados:'📦 Encerrados'};
-const S={user:null,avatars:{},topics:[],comments:{},votes:[],hist:[],view:'andamento',q:'',type:'all',sort:'act',auth:'in',fail:'',users:[],allowed:{},cur:null,draft:null};
+const S={user:null,avatars:{},people:{},pl:false,notifs:[],topics:[],comments:{},votes:[],hist:[],view:'andamento',q:'',type:'all',sort:'act',auth:'in',fail:'',users:[],allowed:{},cur:null,draft:null,focus:null,busy:false,catt:{tid:null,list:[]},natt:[]};
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const rich=s=>e(s).replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>').replace(/(^|\s)@([\wÀ-ÿ.-]+)/g,'$1<span class="tag">@$2</span>');
+const reEsc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+const fold=s=>String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+/* Menções: nomes completos das pessoas cadastradas e @todos são destacados no texto */
+let mre=null,mkey=null;
+const mRe=()=>{const n=Object.values(S.people).map(p=>p.name).filter(Boolean).sort((a,b)=>b.length-a.length),k=n.join('\n');
+ if(k!==mkey){mkey=k;mre=new RegExp('(^|\\s)@('+n.map(x=>reEsc(e(x))).concat(['todos','[\\wÀ-ÿ.-]+']).join('|')+')','gi')}return mre};
+const rich=s=>e(s).replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>').replace(mRe(),'$1<span class="tag">@$2</span>');
 /* Segurança: tudo que vai dentro de onclick="..." passa por sid() (ids) ou ek() (e-mails) */
 const sid=s=>String(s??'').replace(/[^\w-]/g,'');
 const ek=s=>encodeURIComponent(s).replace(/[!'()*]/g,c=>'%'+c.charCodeAt(0).toString(16).toUpperCase());
@@ -147,10 +168,12 @@ const isAdmin=()=>!!(S.user&&S.user.status=='ok'&&isAdm(S.user.email));
 const statusOf=(email,verified,p,a)=>!verified?'verify':
  isAdm(email)?'ok':
  a?(a.status=='approved'?'ok':'rejected'):(p&&p.approved===true?'ok':(p&&p.rejected?'rejected':'pending'));
-/* Avatar: foto de perfil (se houver) ou a inicial do nome. u pode ser {uid,name} ou um perfil {id,name} */
+/* Nome atual da pessoa (o diretório "people" acompanha as renomeações); senão, o nome gravado no item */
+const N=u=>(u&&u.uid&&S.people[u.uid]&&S.people[u.uid].name)||(u&&u.name)||'';
+/* Avatar: foto de perfil (se houver) ou a inicial do nome */
 const IMG=/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/;
 const av=(u,c)=>{const id=u&&(u.uid||u.id),p=id&&S.avatars[id],k='av'+(c?' '+c:'');
- return p?`<span class="${k}"><img src="${p}" alt="" loading="lazy"></span>`:`<span class="${k}">${e(((u&&u.name)||'?')[0].toUpperCase())}</span>`};
+ return p?`<span class="${k}"><img src="${p}" alt="" loading="lazy"></span>`:`<span class="${k}">${e((N(u)||'?')[0].toUpperCase())}</span>`};
 $$('hl,pl').forEach(x=>x.src=LOGO);
 const seen=()=>{try{return JSON.parse(localStorage['seen_'+S.user.uid]||'{}')||{}}catch(x){return{}}};
 
@@ -163,25 +186,31 @@ if(typeof firebase==='undefined'||!CONFIG.firebase){
 firebase.initializeApp(CONFIG.firebase);
 const db=firebase.firestore(),col=db.collection('topics'),au=firebase.auth(),TS=()=>firebase.firestore.FieldValue.serverTimestamp();
 au.languageCode='pt-BR';
-let unsubV=null,unsub=null,unsubC=null,unsubU=null,unsubP=null,unsubA=null,reg=false,wid=null,wun=[];
+let subs=[],unsubU=null,unsubP=null,unsubA=null,reg=false,wid=null,wun=[],wroteName=null;
 const saveFail=x=>alert('Não foi possível salvar: '+((x&&x.code=='permission-denied')?'sem permissão (verifique as regras do Firestore e se o item ainda está aberto).':((x&&x.message)||x)));
 const readFail=x=>{S.fail=x&&x.code=='permission-denied'?'Sem permissão para ler os dados. Verifique se o Firestore foi criado e se as regras foram publicadas.':'Falha ao carregar os dados: '+((x&&x.message)||x);render()};
 /* Datas vêm do servidor (Timestamp); aqui viram milissegundos */
 const ms=v=>v&&typeof v.toMillis=='function'?v.toMillis():(typeof v=='number'?v:0);
 const dat=d=>{const x=d.data({serverTimestamps:'estimate'});x.id=d.id;return x};
-const normT=d=>{const x=dat(d);x.ts=ms(x.ts);x.act=ms(x.act)||x.ts;
+const normT=d=>{const x=dat(d);x.ts=ms(x.ts);x.act=ms(x.act)||x.ts;x.ends=ms(x.ends)||null;
  ['archived','closed','done'].forEach(k=>{if(x[k]&&typeof x[k]=='object')x[k]={...x[k],at:ms(x[k].at)}});return x};
+const notifCol=uid=>db.collection('notifs').doc(uid).collection('items');
 const store={
  sub(){
-  unsub&&unsub();unsubC&&unsubC();unsubV&&unsubV();
-  /* Fotos de perfil: só entram imagens JPEG em data URL válidas (nada de HTML ou outros esquemas) */
-  unsubV=db.collection('avatars').onSnapshot(s=>{const m={};s.docs.forEach(d=>{const x=d.data().img;if(typeof x=='string'&&IMG.test(x))m[d.id]=x});S.avatars=m;render()},()=>{});
-  unsub=col.onSnapshot(s=>{S.fail='';S.topics=s.docs.map(normT);render()},readFail);
-  unsubC=db.collectionGroup('comments').onSnapshot(s=>{
-   const m={};
-   s.docs.forEach(d=>{const x=dat(d);x.ts=ms(x.ts);const tid=d.ref.parent.parent.id;(m[tid]=m[tid]||[]).push(x)});
-   Object.values(m).forEach(a=>a.sort((p,q)=>p.ts-q.ts));
-   S.comments=m;render()},readFail);
+  subs.forEach(f=>f());
+  subs=[
+   /* Fotos de perfil: só entram imagens JPEG em data URL válidas (nada de HTML ou outros esquemas) */
+   db.collection('avatars').onSnapshot(s=>{const m={};s.docs.forEach(d=>{const x=d.data().img;if(typeof x=='string'&&IMG.test(x))m[d.id]=x});S.avatars=m;render()},()=>{}),
+   /* Diretório de pessoas com acesso: usado para atribuir tarefas, mencionar e mostrar o nome atual */
+   db.collection('people').onSnapshot(s=>{const m={};s.docs.forEach(d=>{const n=d.data().name;if(typeof n=='string'&&n)m[d.id]={name:n}});S.people=m;S.pl=true;syncMe();syncPeople();render()},()=>{}),
+   notifCol(S.user.uid).orderBy('ts','desc').limit(100).onSnapshot(s=>{S.notifs=s.docs.map(d=>{const x=dat(d);x.ts=ms(x.ts);return x});render()},()=>{}),
+   col.onSnapshot(s=>{S.fail='';S.topics=s.docs.map(normT);autoClose();render()},readFail),
+   db.collectionGroup('comments').onSnapshot(s=>{
+    const m={};
+    s.docs.forEach(d=>{const x=dat(d);x.ts=ms(x.ts);const tid=d.ref.parent.parent.id;(m[tid]=m[tid]||[]).push(x)});
+    Object.values(m).forEach(a=>a.sort((p,q)=>p.ts-q.ts));
+    S.comments=m;render()},readFail)
+  ];
  },
  /* Votos e histórico só são carregados para o item aberto */
  watch(id){
@@ -190,11 +219,11 @@ const store={
   if(!id)return;
   const tr=col.doc(id);
   wun.push(tr.collection('votes').onSnapshot(s=>{if(wid===id){S.votes=s.docs.map(dat);render()}},readFail));
-  wun.push(tr.collection('hist').onSnapshot(s=>{if(wid===id){S.hist=s.docs.map(d=>{const x=dat(d);x.ts=ms(x.ts);x.by=(x.by&&x.by.name)||'';return x});render()}},readFail));
+  wun.push(tr.collection('hist').onSnapshot(s=>{if(wid===id){S.hist=s.docs.map(d=>{const x=dat(d);x.ts=ms(x.ts);return x});render()}},readFail));
  },
- subUsers(cb){unsubU&&unsubU();let us=[],al={};
-  const a=db.collection('users').onSnapshot(s=>{us=s.docs.map(d=>({id:d.id,...d.data()}));cb(us,al)},readFail);
-  const b=db.collection('allowed').onSnapshot(s=>{al={};s.docs.forEach(d=>al[d.id]=d.data());cb(us,al)},readFail);
+ subUsers(cb){unsubU&&unsubU();let us=null,al=null;const both=()=>{if(us&&al)cb(us,al)};
+  const a=db.collection('users').onSnapshot(s=>{us=s.docs.map(d=>({id:d.id,...d.data()}));both()},readFail);
+  const b=db.collection('allowed').onSnapshot(s=>{al={};s.docs.forEach(d=>al[d.id]=d.data());both()},readFail);
   unsubU=()=>{a();b()}},
  /* Aprovação por e-mail: vale para qualquer conta com esse e-mail; os perfis (users) são atualizados junto */
  setAccess(email,st,ids,quiet){const b=db.batch(),ok=st=='ok';
@@ -202,7 +231,26 @@ const store={
   ids.forEach(id=>b.update(db.collection('users').doc(id),ok?{approved:true,rejected:false}:{approved:false,rejected:true}));
   return b.commit().catch(x=>{if(!quiet)saveFail(x)})}
 };
-const stopData=()=>{unsub&&unsub();unsubC&&unsubC();unsubU&&unsubU();unsubV&&unsubV();unsub=unsubC=unsubU=unsubV=null;store.watch(null);S.avatars={};S.topics=[];S.comments={};S.users=[];S.allowed={}};
+const stopData=()=>{subs.forEach(f=>f());subs=[];unsubU&&unsubU();unsubU=null;store.watch(null);
+ S.avatars={};S.people={};S.pl=false;S.ul=false;S.notifs=[];S.topics=[];S.comments={};S.users=[];S.allowed={}};
+/* Mantém o próprio nome no diretório de pessoas */
+function syncMe(){const u=S.user;if(!u||u.status!='ok'||!S.pl)return;const p=S.people[u.uid];
+ if(p&&p.name===u.name){wroteName=u.name;return}
+ if(wroteName===u.name)return;wroteName=u.name;
+ db.collection('people').doc(u.uid).set({name:u.name,ts:TS()}).catch(()=>{wroteName=null})}
+/* O admin mantém o diretório em dia: inclui quem tem acesso e retira quem foi recusado ou revogado */
+const psync=new Set();
+function syncPeople(){
+ if(!isAdmin()||!S.pl||!S.ul)return;
+ groups().forEach(g=>{
+  const ids=g.docs.map(d=>d.id);
+  if(g.status=='ok'){
+   if(ids.some(id=>S.people[id]))return;
+   const d=g.docs.slice().sort((a,b)=>(b.created||0)-(a.created||0))[0],n=String(d.name||g.name||'').trim().slice(0,80);
+   if(n.length>=2&&!psync.has(d.id)){psync.add(d.id);db.collection('people').doc(d.id).set({name:n,ts:TS()}).catch(()=>{})}
+  }else ids.forEach(id=>{if(S.people[id]&&!psync.has('x'+id)){psync.add('x'+id);db.collection('people').doc(id).delete().catch(()=>{})}});
+ });
+}
 /* Acompanha o perfil da pessoa em tempo real: quando o admin aprova, o acesso abre sozinho */
 function enter(u,name){
  unsubP&&unsubP();unsubA&&unsubA();
@@ -212,7 +260,7 @@ function enter(u,name){
   if(!p&&!isAdm(email)&&!created){created=true;try{await db.collection('users').doc(u.uid).set({name,email,created:Date.now(),approved:false})}catch(x){}return}
   const st=statusOf(email,u.emailVerified,p,a),was=S.user&&S.user.uid==u.uid&&S.user.status=='ok';
   S.user={uid:u.uid,name:(p&&p.name)||name,email,verified:u.emailVerified,status:st};
-  if(st=='ok'){if(!was){store.sub();if(isAdmin())store.subUsers((us,al)=>{S.users=us;S.allowed=al;heal();render()})}}
+  if(st=='ok'){if(!was){store.sub();if(isAdmin())store.subUsers((us,al)=>{S.users=us;S.allowed=al;S.ul=true;heal();syncPeople();render()})}syncMe()}
   else stopData();
   render();
  };
@@ -246,13 +294,14 @@ const ERR={'auth/email-already-in-use':'Este e-mail já está cadastrado. Use �
 const showErr=(m,ok)=>{const x=$('err');if(x){x.textContent=m;x.className='err'+(ok?' ok':'')}};
 const EMAIL=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const msg=x=>ERR[x&&x.code]||(x&&x.message)||'Erro inesperado.';
+const cleanName=s=>String(s).trim().replace(/[|@]/g,'').replace(/\s+/g,' ');
 async function doLogin(ev){
  ev.preventDefault();const f=ev.target;showErr('');
  try{await auth.login(f.em.value.trim().toLowerCase(),f.pw.value)}catch(x){showErr(msg(x))}
 }
 async function doReg(ev){
  ev.preventDefault();const f=ev.target;showErr('');
- const name=f.nm.value.trim().replace(/\|/g,''),em=f.em.value.trim().toLowerCase(),pw=f.pw.value;
+ const name=cleanName(f.nm.value),em=f.em.value.trim().toLowerCase(),pw=f.pw.value;
  if(name.length<2)return showErr('Informe seu nome.');
  if(name.length>80)return showErr('Nome muito longo (máx. 80 caracteres).');
  if(!EMAIL.test(em))return showErr('Informe um e-mail válido.');
@@ -275,14 +324,18 @@ const T=id=>S.topics.find(t=>t.id==id),who=()=>({uid:S.user.uid,name:S.user.name
 const legacyC=t=>(Array.isArray(t.comments)?t.comments:[]).map(c=>({...c,legacy:true,ts:ms(c.ts)}));
 const legacyH=t=>(Array.isArray(t.hist)?t.hist:[]).map(h=>({ts:ms(h.ts),by:typeof h.by=='string'?h.by:((h.by&&h.by.name)||''),txt:h.txt}));
 const cmts=t=>[...legacyC(t),...(S.comments[t.id]||[])];
-const people=()=>{const m={};S.topics.forEach(t=>{m[t.author.uid]=t.author.name;legacyC(t).forEach(c=>m[c.author.uid]=c.author.name)});Object.values(S.comments).forEach(a=>a.forEach(c=>m[c.author.uid]=c.author.name));m[S.user.uid]=S.user.name;return Object.entries(m)};
+/* Pessoas com acesso ao portal (diretório), em ordem alfabética */
+const dir=()=>Object.entries(S.people).map(([id,p])=>[id,p.name]).sort((a,b)=>a[1].localeCompare(b[1],'pt-BR'));
+const unread=()=>S.notifs.filter(n=>!n.read).length;
 function render(){
  const ok=!!(S.user&&S.user.status=='ok');
  const o=$('ct');if(o&&S.cur)S.draft={id:S.cur,v:o.value,f:document.activeElement===o};
  document.body.classList.toggle('anon',!ok);
  if(S.view=='cadastros'&&!isAdmin())S.view='andamento';
  $('q').style.display=ok?'':'none';
- $('me').innerHTML=ok?`<div style="display:flex;gap:10px;align-items:center"><button class="avb" title="Alterar foto de perfil" aria-label="Alterar foto de perfil" onclick="profile()">${av(S.user)}</button><b style="font-size:14px">${e(S.user.name.split(' ')[0])}</b><button class="btn ghost sm" onclick="auth.logout()">Sair</button></div>`:'';
+ const un=ok?unread():0;
+ document.title=(un?`(${un}) `:'')+'Portal da Diretoria';
+ $('me').innerHTML=ok?`<div style="display:flex;gap:10px;align-items:center"><button class="btn ghost sm bell" title="Menções e tarefas atribuídas a você" aria-label="Menções${un?` (${un} não lidas)`:''}" onclick="S.view='mencoes';go('')">🔔${un?`<span class="n">${un}</span>`:''}</button><button class="avb" title="Meu perfil: nome e foto" aria-label="Meu perfil" onclick="profile()">${av(S.user)}</button><b style="font-size:14px">${e(S.user.name.split(' ')[0])}</b><button class="btn ghost sm" onclick="auth.logout()">Sair</button></div>`:'';
  if(!S.user){
   S.cur=null;store.watch(null);
   const up=S.auth=='up',rs=S.auth=='reset';
@@ -309,11 +362,14 @@ function render(){
  const m=location.hash.match(/^#t\/([\w-]+)$/),t=m&&T(m[1]);
  store.watch(t?t.id:null);
  S.cur=t?t.id:null;
- if(t){const s=seen();s[t.id]=t.act||t.ts;try{localStorage['seen_'+S.user.uid]=JSON.stringify(s)}catch(x){}}
- $('app').innerHTML=`<div class="wrap"><aside>${side()}</aside><main>${t?detail(t):(S.view=='cadastros'&&isAdmin()?usersPanel():list())}</main></div>`;
+ if(t&&S.catt.tid&&S.catt.tid!==t.id)S.catt={tid:null,list:[]};
+ if(t){const s=seen();s[t.id]=t.act||t.ts;try{localStorage['seen_'+S.user.uid]=JSON.stringify(s)}catch(x){}readFor(t.id)}
+ $('app').innerHTML=`<div class="wrap"><aside>${side()}</aside><main>${t?detail(t):(S.view=='cadastros'&&isAdmin()?usersPanel():S.view=='mencoes'?mentionsPanel():list())}</main></div>`;
  /* mantém o comentário que estava sendo digitado quando chegam atualizações em tempo real */
  const c=$('ct');
  if(c&&S.draft&&S.draft.id==S.cur){c.value=S.draft.v;if(S.draft.f){c.focus();c.setSelectionRange(c.value.length,c.value.length)}}
+ /* vindo de uma menção: rola até o comentário e o destaca */
+ if(t&&S.focus){const f=S.focus;S.focus=null;setTimeout(()=>{const x=$('c-'+sid(f));if(x){x.scrollIntoView({block:'center'});x.classList.add('flash')}},60)}
 }
 /* ---------- Aprovação de cadastros ---------- */
 /* Um e-mail = uma pessoa: registros repetidos do mesmo e-mail são unidos e aprovados juntos */
@@ -331,7 +387,7 @@ const groups=()=>{
 /* Cadastros aprovados antes desta versão (sem registro por e-mail) são migrados automaticamente quando o admin abre o portal */
 const healing=new Set();
 const heal=()=>groups().filter(g=>g.status=='ok'&&!(S.allowed||{})[g.email]&&!healing.has(g.email)).forEach(g=>{healing.add(g.email);store.setAccess(g.email,'ok',g.docs.map(d=>d.id),true)});
-const pend=()=>groups().filter(g=>g.status=='pending'),members=()=>groups().filter(g=>g.status=='ok');
+const pendU=()=>groups().filter(g=>g.status=='pending'),members=()=>groups().filter(g=>g.status=='ok');
 const setUser=(k,st)=>{
  const g=groups().find(x=>x.email==decodeURIComponent(k));if(!g)return;
  if(st=='no'&&!confirm(`${g.status=='ok'?'Revogar o acesso de':'Recusar o cadastro de'} ${g.name}?`))return;
@@ -342,7 +398,7 @@ function usersPanel(){
  const sec=(t,L,fn,empty)=>`<h3 style="margin:18px 0 8px">${t} <span class="meta">(${L.length})</span></h3><div class="card list">${L.length?L.map(fn).join(''):`<div class="empty" style="padding:18px">${empty}</div>`}</div>`;
  const k=g=>ek(g.email),rej=groups().filter(g=>g.status=='rejected');
  return `<h2 style="margin:0 0 4px">👥 Cadastros</h2><p class="meta" style="margin:0">Só quem for aprovado aqui (e tiver confirmado o e-mail) consegue ver e participar do portal.</p>
- ${sec('⏳ Aguardando aprovação',pend(),g=>row(g,`<button class="btn sm" onclick="setUser('${k(g)}','ok')">✔ Aprovar</button><button class="btn ghost sm danger" onclick="setUser('${k(g)}','no')">Recusar</button>`),'Nenhum cadastro pendente.')}
+ ${sec('⏳ Aguardando aprovação',pendU(),g=>row(g,`<button class="btn sm" onclick="setUser('${k(g)}','ok')">✔ Aprovar</button><button class="btn ghost sm danger" onclick="setUser('${k(g)}','no')">Recusar</button>`),'Nenhum cadastro pendente.')}
  ${sec('✅ Com acesso',members(),g=>row(g,`<button class="btn ghost sm danger" onclick="setUser('${k(g)}','no')">Revogar acesso</button>`),'Ninguém aprovado ainda.')}
  ${rej.length?sec('🚫 Recusados',rej,g=>row(g,`<button class="btn ghost sm" onclick="setUser('${k(g)}','ok')">Aprovar</button>`),''):''}`;
 }
@@ -355,56 +411,232 @@ function gate(){
  :`<h2 style="margin-top:0">Aguardando aprovação</h2><p>Olá, ${first}! Sua conta foi criada, mas um administrador precisa aprová-la antes de você acessar o portal. Esta página atualiza sozinha assim que isso acontecer.</p>${out}`;
  $('app').innerHTML=`<div class="hero"><img src="${LOGO}" alt="Liga Brasileira de Esperanto" style="width:min(260px,70%)"><div class="card auth" style="text-align:center;margin-top:20px">${h}</div></div>`;
 }
+/* ---------- Enquetes: votos, apuração e encerramento automático ---------- */
+/* Votos novos guardam a lista "opts"; os antigos guardavam um único "opt" */
+const vopts=v=>[...new Set(Array.isArray(v.opts)?v.opts:(Number.isInteger(v.opt)?[v.opt]:[]))].filter(Number.isInteger);
+const legV=o=>Array.isArray(o&&o.v)?o.v:[];
+const tally=(t,vs)=>(t.options||[]).map((o,i)=>legV(o).length+vs.filter(v=>vopts(v).includes(i)).length);
+/* A conclusão de uma enquete é sempre a opção mais votada (ou o empate entre as mais votadas) */
+function pollResult(t,vs){
+ const c=tally(t,vs),m=Math.max(0,...c);
+ if(!m)return'Encerrada sem votos.';
+ const w=c.map((n,i)=>n==m?'“'+String(t.options[i].t)+'”':null).filter(Boolean);
+ return (w.length>1?`Empate entre ${w.join(', ')} (${m} voto(s) cada).`:`Resultado: ${w[0]} (${m} voto(s)).`).slice(0,2000);
+}
+const expired=t=>t.type=='poll'&&!t.archived&&!t.closed&&!t.done&&!!t.ends&&Date.now()>=t.ends;
+const closing=new Set();
+async function autoClose(){
+ for(const t of S.topics.filter(expired)){
+  if(closing.has(t.id))continue;closing.add(t.id);
+  try{
+   const vs=(await col.doc(t.id).collection('votes').get()).docs.map(dat),tr=col.doc(t.id),b=db.batch();
+   b.update(tr,{act:TS(),archived:{by:who(),at:TS(),note:pollResult(t,vs),auto:true}});
+   b.set(tr.collection('hist').doc(),{by:who(),txt:'encerrou automaticamente (fim do prazo da enquete)',ts:TS()});
+   await b.commit();
+  }catch(x){setTimeout(()=>closing.delete(t.id),6e4)}
+ }
+}
+/* Confere os prazos a cada 30 s: a enquete aparece como encerrada assim que o prazo vence */
+setInterval(()=>{if(S.user&&S.user.status=='ok'&&S.topics.some(expired)){autoClose();render()}},3e4);
+
 /* Encerrado = arquivado. Os campos antigos (closed/done) continuam sendo reconhecidos para itens já existentes. */
-const fin=t=>t.archived||t.closed||t.done||null,arch=t=>!!fin(t),isRem=t=>t.type=='reminder';
+const fin=t=>t.archived||t.closed||t.done||(expired(t)?{auto:true,at:t.ends,by:null,note:''}:null),arch=t=>!!fin(t),isRem=t=>t.type=='reminder';
 const inView=(t,v)=>v=='encerrados'?arch(t):!arch(t);
 function side(){
- const rem=S.topics.filter(t=>isRem(t)&&!arch(t)&&t.due).sort((a,b)=>a.due>b.due?1:-1).slice(0,4);
+ const rem=S.topics.filter(t=>isRem(t)&&!arch(t)&&t.due).sort((a,b)=>a.due>b.due?1:-1).slice(0,4),un=unread();
  return `<button class="btn newbtn" style="width:100%;margin-bottom:14px" onclick="compose()">＋ Novo</button>
- <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pend().length?`<span class="tag">${pend().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
- <div class="box rem-box"><h4>⏰ Próximos prazos</h4>${rem.length?rem.map(r=>`<div style="margin:6px 0;cursor:pointer" onclick="go('t/${sid(r.id)}')"><b>${e(r.title)}</b><div class="meta ${r.due<today()?'due':''}">${r.due<today()?'Vencido · ':''}${fd(r.due)}${r.assignee?' · '+e(r.assignee.name.split(' ')[0]):''}</div></div>`).join(''):'<span class="meta">Nenhum pendente 🎉</span>'}</div>`;
+ <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}<button class="cat ${S.view=='mencoes'?'on':''}" onclick="S.view='mencoes';go('')">🔔 Menções${un?`<span class="tag">${un} nova(s)</span>`:''}</button>${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pendU().length?`<span class="tag">${pendU().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
+ <div class="box rem-box"><h4>📋 Próximos prazos</h4>${rem.length?rem.map(r=>`<div style="margin:6px 0;cursor:pointer" onclick="go('t/${sid(r.id)}')"><b>${e(r.title)}</b><div class="meta ${r.due<today()?'due':''}">${r.due<today()?'Vencida · ':''}${fd(r.due)}${r.assignee?' · '+e(N(r.assignee).split(' ')[0]):''}</div></div>`).join(''):'<span class="meta">Nenhuma tarefa pendente 🎉</span>'}</div>`;
 }
 function list(){
  const q=S.q.toLowerCase(),v=S.view,sd=seen();
- let L=S.topics.filter(t=>inView(t,v)&&(S.type=='all'||t.type==S.type)&&(!q||((t.title||'')+(t.body||'')+t.author.name+cmts(t).map(c=>c.text).join(' ')).toLowerCase().includes(q)));
+ let L=S.topics.filter(t=>inView(t,v)&&(S.type=='all'||t.type==S.type)&&(!q||((t.title||'')+(t.body||'')+N(t.author)+cmts(t).map(c=>c.text||'').join(' ')+(t.files||[]).map(f=>f&&f.name).join(' ')).toLowerCase().includes(q)));
  L.sort((a,b)=>v=='encerrados'?fin(b).at-fin(a).at:(b.pinned?1:0)-(a.pinned?1:0)||(S.type=='reminder'?(a.due>b.due?1:-1):S.sort=='act'?(b.act||b.ts)-(a.act||a.ts):b.ts-a.ts));
  const open=S.topics.filter(t=>!arch(t)),venc=open.filter(t=>isRem(t)&&t.due<today()).length;
- return `${S.fail?`<div class="banner err">⚠ ${e(S.fail)}</div>`:''}${isAdmin()&&pend().length?`<div class="banner">👥 <b>${pend().length}</b> cadastro(s) aguardando sua aprovação. <button class="lnk" onclick="S.view='cadastros';go('')">Revisar agora</button></div>`:''}<div class="stat noprint"><div><b>${open.length}</b>em andamento</div><div><b>${open.filter(isRem).length}</b>lembretes</div><div><b class="${venc?'due':''}">${venc}</b>vencidos</div><div><b>${open.filter(t=>t.type=='poll').length}</b>enquetes abertas</div></div>
+ return `${S.fail?`<div class="banner err">⚠ ${e(S.fail)}</div>`:''}${isAdmin()&&pendU().length?`<div class="banner">👥 <b>${pendU().length}</b> cadastro(s) aguardando sua aprovação. <button class="lnk" onclick="S.view='cadastros';go('')">Revisar agora</button></div>`:''}${unread()?`<div class="banner">🔔 Você tem <b>${unread()}</b> menção(ões) não lida(s). <button class="lnk" onclick="S.view='mencoes';go('')">Ver agora</button></div>`:''}<div class="stat noprint"><div><b>${open.length}</b>em andamento</div><div><b>${open.filter(isRem).length}</b>tarefas</div><div><b class="${venc?'due':''}">${venc}</b>vencidas</div><div><b>${open.filter(t=>t.type=='poll').length}</b>enquetes abertas</div></div>
  <h2 style="margin:0 0 10px">${VIEWS[v]}</h2>
- <div class="tabs">${[['all','Todos'],['topic','💬 Tópicos'],['poll','📊 Enquetes'],['reminder','⏰ Lembretes']].map(([k,x])=>`<button class="btn ${S.type==k?'':'ghost'}" onclick="S.type='${k}';render()">${x}</button>`).join('')}
+ <div class="tabs">${[['all','Todos'],['topic','💬 Tópicos'],['poll','📊 Enquetes'],['reminder','📋 Tarefas']].map(([k,x])=>`<button class="btn ${S.type==k?'':'ghost'}" onclick="S.type='${k}';render()">${x}</button>`).join('')}
  </div>
- <div class="card list">${L.length?L.map(t=>{const un=(t.act||t.ts)>(sd[t.id]||0)&&t.author.uid!=S.user.uid||(t.act||t.ts)>(sd[t.id]||0)&&sd[t.id],f=fin(t);
+ <div class="card list">${L.length?L.map(t=>{const un=(t.act||t.ts)>(sd[t.id]||0)&&t.author.uid!=S.user.uid||(t.act||t.ts)>(sd[t.id]||0)&&sd[t.id],f=fin(t),nf=Array.isArray(t.files)?t.files.length:0;
  return `<div class="row" onclick="go('t/${sid(t.id)}')">${un?'<span class="dot" title="Novidades"></span>':'<span style="width:9px"></span>'}${av(t.author)}<div><h3>${t.pinned?'📌 ':''}${e(t.title)}</h3>
- <div class="meta">${TYPES[t.type]} · ${e(t.author.name)} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${t.assignee?' · 👤 '+e(t.assignee.name):''}${f?` · 📦 ${e((f.by&&f.by.name)||'')}, ${fmt(f.at)}`:''}</div></div>
- <div class="stats">💬 ${cmts(t).length}</div></div>`}).join(''):'<div class="empty">Nada por aqui ainda.</div>'}</div>`;
+ <div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${t.assignee?' · 👤 '+e(N(t.assignee)):''}${!f&&t.ends?` · ⏳ até ${fmt(t.ends)}`:''}${nf?` · 📎 ${nf}`:''}${f?` · 📦 ${f.auto?'prazo encerrado':e(N(f.by))}, ${fmt(f.at)}`:''}</div></div>
+ <div class="stats">${t.type=='poll'?'':`💬 ${cmts(t).length}`}</div></div>`}).join(''):'<div class="empty">Nada por aqui ainda.</div>'}</div>`;
 }
+/* ---------- Anexos (PDF e imagens) ----------
+   Os arquivos ficam no próprio Firestore (coleção "files", em pedaços), sem precisar do Firebase Storage. */
+const fsz=n=>n>=1048576?(n/1048576).toFixed(1).replace('.',',')+' MB':Math.max(1,Math.round(n/1024))+' KB';
+const atts=L=>Array.isArray(L)&&L.length?`<div class="att">${L.map(f=>{const id=sid(f&&f.id);if(!id)return'';const pdf=f.type=='application/pdf';
+ return !pdf&&typeof f.thumb=='string'&&IMG.test(f.thumb)?`<button class="thumb" title="Abrir ${e(f.name)}" onclick="openFile('${id}','i')"><img src="${f.thumb}" alt="${e(f.name)}"></button>`
+ :`<button class="chip" onclick="openFile('${id}','${pdf?'p':'i'}')">${pdf?'📄':'🖼'} ${e(f.name)} <span class="meta">${fsz(+f.size||0)}</span></button>`}).join('')}</div>`:'';
+const chips=(L,w)=>L.map((f,k)=>`<span class="chip">${f.type=='application/pdf'?'📄':'🖼'} ${e(f.name)} <span class="meta">${fsz(f.size)}</span><button type="button" class="lnk danger" title="Retirar anexo" onclick="unpick('${w}',${k})">✕</button></span>`).join('');
+const MAXB=10*1024*1024,CH=700000;
+const loadImg=f=>new Promise((ok,no)=>{const u=URL.createObjectURL(f),i=new Image();
+ i.onload=()=>{URL.revokeObjectURL(u);ok(i)};i.onerror=()=>{URL.revokeObjectURL(u);no(new Error('Não foi possível ler esta imagem. Use um arquivo JPG ou PNG.'))};i.src=u});
+/* Imagens são reduzidas (máx. 2000 px) e convertidas para JPEG; PDFs vão como estão (máx. 10 MB) */
+async function prep(f){
+ if(f.type=='application/pdf'||/\.pdf$/i.test(f.name)){
+  if(f.size>MAXB)throw new Error('PDF grande demais (máx. 10 MB).');
+  return{name:f.name,type:'application/pdf',size:f.size,blob:f}}
+ if(!/^image\//.test(f.type))throw new Error('só é possível anexar PDFs e imagens.');
+ if(f.size>40e6)throw new Error('imagem grande demais.');
+ const i=await loadImg(f),W=i.naturalWidth,H=i.naturalHeight;if(!W||!H)throw new Error('imagem inválida.');
+ const cv=m=>{const k=Math.min(1,m/Math.max(W,H)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(W*k));c.height=Math.max(1,Math.round(H*k));
+  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(i,0,0,c.width,c.height);return c};
+ const blob=await new Promise(r=>cv(2000).toBlob(r,'image/jpeg',.85));
+ if(!blob)throw new Error('não foi possível processar a imagem.');
+ if(blob.size>MAXB)throw new Error('imagem grande demais.');
+ const th=cv(320).toDataURL('image/jpeg',.7);
+ return{name:(f.name.replace(/\.[^.]+$/,'')||'imagem')+'.jpg',type:'image/jpeg',size:blob.size,blob,thumb:IMG.test(th)?th:null};
+}
+async function pick(inp,w){
+ const fs=[...(inp.files||[])];inp.value='';
+ if(w=='ct'&&S.catt.tid!==S.cur)S.catt={tid:S.cur,list:[]};
+ const L=w=='nb'?S.natt:S.catt.list;
+ for(const f of fs){
+  if(L.length>=5){alert('No máximo 5 anexos por publicação.');break}
+  try{L.push(await prep(f))}catch(x){alert(f.name+': '+((x&&x.message)||x))}
+ }
+ w=='nb'?drawNatt():render();
+}
+const unpick=(w,k)=>{(w=='nb'?S.natt:S.catt.list).splice(k,1);w=='nb'?drawNatt():render()};
+const drawNatt=()=>{const x=$('natt');if(x)x.innerHTML=chips(S.natt,'nb')};
+const b64=blob=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]||'');r.onerror=()=>no(r.error);r.readAsDataURL(blob)});
+async function upFile(f){
+ const d=await b64(f.blob),n=Math.max(1,Math.ceil(d.length/CH)),ref=db.collection('files').doc(),name=String(f.name).slice(0,200);
+ await ref.set({name,type:f.type,size:f.size,owner:S.user.uid,n,ts:TS()});
+ await Promise.all(Array.from({length:n},(_,k)=>ref.collection('chunks').doc(String(k)).set({d:d.slice(k*CH,(k+1)*CH)})));
+ const o={id:ref.id,name,type:f.type,size:f.size};if(f.thumb)o.thumb=f.thumb;return o;
+}
+const upAll=L=>Promise.all((L||[]).map(upFile));
+const fcache={};
+async function openFile(id,k){
+ const w=window.open('','_blank');
+ try{w&&(w.document.title='Carregando…',w.document.body.textContent='Carregando anexo…')}catch(x){}
+ try{
+  let u=fcache[id];
+  if(!u){
+   const s=await db.collection('files').doc(id).collection('chunks').get();
+   const d=s.docs.slice().sort((a,b)=>+a.id-+b.id).map(x=>x.data().d||'').join(''),bin=atob(d),a=new Uint8Array(bin.length);
+   for(let j=0;j<bin.length;j++)a[j]=bin.charCodeAt(j);
+   u=fcache[id]=URL.createObjectURL(new Blob([a],{type:k=='p'?'application/pdf':'image/jpeg'}));
+  }
+  if(w)w.location.href=u;else{const a=document.createElement('a');a.href=u;a.download=k=='p'?'anexo.pdf':'imagem.jpg';a.click()}
+ }catch(x){try{w&&w.close()}catch(y){}alert('Não foi possível abrir o anexo: '+((x&&x.message)||x))}
+}
+async function rmFiles(L){
+ for(const f of (Array.isArray(L)?L:[])){const id=sid(f&&f.id);if(!id)continue;
+  try{const r=db.collection('files').doc(id),s=await r.collection('chunks').get(),b=db.batch();s.docs.forEach(d=>b.delete(d.ref));b.delete(r);await b.commit()}catch(x){}}
+}
+/* ---------- Menções e notificações ---------- */
+let mst=null;
+function mq(el){
+ const v=el.value,p=el.selectionStart,m=v.slice(0,p).match(/(^|\s)@([^\s@]{0,40})$/);
+ if(!m)return mclose();
+ const q=fold(m[2]),L=[];
+ if('todos'.startsWith(q))L.push({n:'todos',d:'notifica todas as pessoas cadastradas'});
+ dir().forEach(([id,n])=>{if(id!=S.user.uid&&fold(n).includes(q))L.push({id,n})});
+ if(!L.length)return mclose();
+ mst={id:el.id,s:p-m[2].length-1,e:p,list:L.slice(0,8),k:0};mdraw();
+}
+function mdraw(){
+ const b=$('mbox'),el=mst&&$(mst.id);if(!el)return mclose();
+ const r=el.getBoundingClientRect();
+ b.innerHTML=mst.list.map((x,k)=>`<button type="button" class="${k==mst.k?'on':''}" onmousedown="event.preventDefault();mpick(${k})">${x.id?av({uid:x.id,name:x.n},'sm'):'<span class="av sm">@</span>'}<span><b>@${e(x.n)}</b>${x.d?`<br><span class="meta">${e(x.d)}</span>`:''}</span></button>`).join('');
+ b.hidden=false;const h=b.offsetHeight;
+ b.style.left=Math.max(8,Math.min(r.left,innerWidth-b.offsetWidth-8))+'px';
+ b.style.top=(r.bottom+4+h>innerHeight&&r.top-h-4>0?r.top-h-4:r.bottom+4)+'px';
+}
+function mpick(k){
+ const x=mst&&mst.list[k],el=x&&$(mst.id);if(!el)return mclose();
+ const v=el.value,ins='@'+x.n+' ',c=mst.s+ins.length;
+ el.value=v.slice(0,mst.s)+ins+v.slice(mst.e);mclose();el.focus();el.setSelectionRange(c,c);
+ if(el.id=='ct'&&S.cur)S.draft={id:S.cur,v:el.value,f:true};
+}
+function mclose(){mst=null;const b=$('mbox');if(b){b.hidden=true;b.innerHTML=''}}
+function mk(ev){
+ if(!mst)return;const n=mst.list.length;
+ if(ev.key=='ArrowDown'||ev.key=='ArrowUp'){ev.preventDefault();mst.k=(mst.k+(ev.key=='ArrowDown'?1:n-1))%n;mdraw()}
+ else if(ev.key=='Enter'||ev.key=='Tab'){ev.preventDefault();mpick(mst.k)}
+ else if(ev.key=='Escape'){ev.preventDefault();ev.stopPropagation();mclose()}
+}
+addEventListener('scroll',()=>mst&&mdraw(),true);
+addEventListener('resize',()=>mst&&mdraw());
+/* Quem foi mencionado: nomes completos (os mais longos primeiro) e, se não houver ambiguidade, só o primeiro nome */
+function mentionsIn(txt){
+ let s=String(txt);const out=new Set(),rx=n=>new RegExp('(^|\\s)@'+reEsc(n)+'(?![\\wÀ-ÿ])','gi');
+ const all=rx('todos').test(s),D=dir().sort((a,b)=>b[1].length-a[1].length),fc={};
+ D.forEach(([id,n])=>{if(rx(n).test(s)){out.add(id);s=s.replace(rx(n),'$1')}});
+ D.forEach(([,n])=>{const f=fold(n.split(' ')[0]);fc[f]=(fc[f]||0)+1});
+ D.forEach(([id,n])=>{const f=n.split(' ')[0];if(fc[fold(f)]==1&&rx(f).test(s))out.add(id)});
+ return{all,uids:[...out]};
+}
+/* Grava uma notificação para cada pessoa mencionada (ou para todas, com @todos), na mesma operação da publicação */
+function notify(b,info,m,extra){
+ const to=new Map();
+ if(m.all)Object.keys(S.people).forEach(u=>to.set(u,'all'));
+ m.uids.forEach(u=>to.set(u,'mention'));
+ extra&&Object.entries(extra).forEach(([u,k])=>to.set(u,k));
+ to.delete(S.user.uid);
+ to.forEach((kind,u)=>b.set(notifCol(u).doc(),{kind,from:who(),tid:info.tid,cid:info.cid||null,
+  title:String(info.title||'').slice(0,200),text:String(info.text||'').replace(/\s+/g,' ').slice(0,200),ts:TS(),read:false}));
+}
+const rd=new Set();
+function readFor(tid){
+ const L=S.notifs.filter(n=>!n.read&&n.tid==tid&&!rd.has(n.id));if(!L.length)return;
+ const b=db.batch();L.forEach(n=>{rd.add(n.id);b.update(notifCol(S.user.uid).doc(n.id),{read:true})});b.commit().catch(()=>{});
+}
+function openN(id){
+ const n=S.notifs.find(x=>x.id==id);if(!n)return;
+ if(!n.read)notifCol(S.user.uid).doc(n.id).update({read:true}).catch(()=>{});
+ if(!T(n.tid))return alert('Este item não existe mais (foi apagado).');
+ S.focus=n.cid||null;go('t/'+sid(n.tid));
+}
+function readAll(){const b=db.batch();S.notifs.filter(n=>!n.read).forEach(n=>b.update(notifCol(S.user.uid).doc(n.id),{read:true}));b.commit().catch(saveFail)}
+function mentionsPanel(){
+ const L=S.notifs,un=unread(),lab=n=>n.kind=='assign'?'atribuiu a você a tarefa':n.kind=='all'?'mencionou @todos em':'mencionou você em';
+ return `<h2 style="margin:0 0 4px">🔔 Menções</h2><p class="meta" style="margin:0 0 10px">Os lugares em que você foi mencionado(a) com @, as menções a @todos e as tarefas atribuídas a você. Clique para ir direto ao ponto.${un?` <button class="lnk" onclick="readAll()">Marcar todas como lidas</button>`:''}</p>
+ <div class="card list">${L.length?L.map(n=>`<div class="row" onclick="openN('${sid(n.id)}')">${n.read?'<span style="width:9px;flex:none"></span>':'<span class="dot" title="Não lida"></span>'}${av(n.from)}<div style="min-width:0"><h3 style="font-weight:${n.read?400:700}">${e(N(n.from))} ${lab(n)} “${e(n.title)}”</h3>${n.text?`<div class="meta">${n.cid?'💬 ':''}${e(n.text)}</div>`:''}<div class="meta">${ago(n.ts)}</div></div></div>`).join(''):'<div class="empty">Nenhuma menção ainda.</div>'}</div>`;
+}
+/* ---------- Item aberto ---------- */
+const cmH=(c,i0)=>`<div class="cm" id="c-${sid(c.id)}">${av(c.author)}<div style="flex:1;min-width:0"><b>${e(N(c.author))}</b> <span class="meta">${ago(c.ts)}</span>
+ ${c.removed?'<div class="removed">🚫 Comentário removido pelo administrador.</div>':`<div class="body" style="margin:2px 0">${rich(c.text)}</div>${atts(c.files)}`}</div>
+ ${isAdmin()&&!c.removed&&!c.legacy&&c.id?`<button class="btn ghost sm danger noprint" title="Remover comentário (administrador)" onclick="delC('${i0}','${sid(c.id)}')">✕</button>`:''}</div>`;
+const composerC=i0=>{const L=S.catt.tid==S.cur?S.catt.list:[];
+ return `<div class="noprint"><textarea id="ct" class="f" rows="3" maxlength="5000" placeholder="Escreva um comentário… digite @ para mencionar alguém ou @todos para avisar todos (Ctrl+Enter envia)" oninput="mq(this)" onblur="setTimeout(mclose,200)" onkeydown="mk(event);if(!event.defaultPrevented&&event.ctrlKey&&event.key=='Enter')comment('${i0}')"></textarea>
+ <div class="att" id="catt">${chips(L,'ct')}</div>
+ <input id="cf" type="file" hidden multiple accept="application/pdf,image/*" onchange="pick(this,'ct')">
+ <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" ${S.busy?'disabled':''} onclick="comment('${i0}')">${S.busy?'Enviando…':'Comentar'}</button><button class="btn ghost" onclick="$('cf').click()">📎 Anexar PDF ou imagem</button></div>
+ <p class="meta" style="margin:6px 0 0">Depois de publicado, o comentário não pode ser apagado por você.</p></div>`};
 function detail(t){
  const u=S.user,off=arch(t),f=fin(t),cm=cmts(t),i0=sid(t.id),
-  can=isAdmin()||t.author.uid==u.uid||!!(t.assignee&&t.assignee.uid==u.uid);
+  can=isAdmin()||t.author.uid==u.uid||(!isRem(t)?false:!!(t.assignee&&t.assignee.uid==u.uid));
  let extra='';
  if(t.type=='poll'){
-  const opts=t.options||[],vs=S.votes,leg=o=>Array.isArray(o.v)?o.v:[],
-   nm=i=>[...leg(opts[i]).map(x=>x.split('|').slice(1).join('|')),...vs.filter(v=>v.opt===i).map(v=>v.name)],
-   tot=opts.reduce((s,_,i)=>s+nm(i).length,0);
-  extra=opts.map((o,i)=>{const n=nm(i).length,me=vs.some(v=>v.id==u.uid&&v.opt===i)||leg(o).some(x=>x.startsWith(u.uid+'|'));
-   return `<button class="opt ${me?'me':''}" ${off?'disabled':''} onclick="vote('${i0}',${i})"><i style="width:${tot?n/tot*100:0}%"></i><span>${e(o.t)}<b>${n} voto(s)</b></span></button>`}).join('')
-   +`<div class="meta">${tot} voto(s) · votos nominais${opts.map((o,i)=>nm(i).length?`<br>${e(o.t)}: ${nm(i).map(x=>e(x)).join(', ')}`:'').join('')}</div>`}
- if(isRem(t))extra=`<p>📅 Prazo: <b class="${!off&&t.due<today()?'due':''}">${fd(t.due)}</b>${t.assignee?` · 👤 Responsável: <b>${e(t.assignee.name)}</b>`:''}</p>
-  ${off||!can?'':`<button class="btn" onclick="finish('${i0}','Lembrete concluído.')">✔ Marcar como concluído</button>`}`;
+  const opts=t.options||[],vs=S.votes,
+   nm=i=>[...legV(opts[i]).map(x=>String(x).split('|').slice(1).join('|')),...vs.filter(v=>vopts(v).includes(i)).map(v=>N({uid:v.id,name:v.name}))],
+   part=vs.length+opts.reduce((s,o)=>s+legV(o).length,0),my=vs.find(v=>v.id==u.uid),mine=my?vopts(my):[];
+  extra=`<p class="meta" style="margin:0 0 4px">${t.multi?'☑ Múltipla escolha: marque quantas opções quiser.':'◉ Escolha única: marque uma opção.'}${!off?' Clique de novo para desmarcar.':''}${!off&&t.ends?` ⏳ Encerra automaticamente em <b>${fmt(t.ends)}</b>.`:''}</p>`
+   +opts.map((o,i)=>{const n=nm(i).length,me=mine.includes(i)||legV(o).some(x=>String(x).startsWith(u.uid+'|'));
+    return `<button class="opt ${me?'me':''}" ${off?'disabled':''} onclick="vote('${i0}',${i})"><i style="width:${part?n/part*100:0}%"></i><span>${t.multi?(me?'☑ ':'☐ '):''}${e(o.t)}<b>${n} voto(s)</b></span></button>`}).join('')
+   +`<div class="meta">${part} participante(s) · votos nominais${opts.map((o,i)=>nm(i).length?`<br>${e(o.t)}: ${nm(i).map(x=>e(x)).join(', ')}`:'').join('')}</div>`}
+ if(isRem(t))extra=`<p>📅 Prazo: <b class="${!off&&t.due<today()?'due':''}">${fd(t.due)}</b>${t.assignee?` · 👤 Responsável: <b>${e(N(t.assignee))}</b>`:''}</p>
+  ${off||!can?'':`<button class="btn" onclick="finish('${i0}','Tarefa concluída.')">✔ Marcar como concluída</button>`}`;
+ const note=f?(f.note||(t.type=='poll'&&f.auto?pollResult(t,S.votes):'')):'';
  const hl=[...legacyH(t),...S.hist].sort((a,b)=>a.ts-b.ts).reverse(),
-  hist=hl.map(h=>`<div class="h"><b>${e(h.by)}</b> ${e(h.txt)} <span class="meta">· ${fmt(h.ts)}</span></div>`).join('');
+  hist=hl.map(h=>`<div class="h"><b>${e(typeof h.by=='string'?h.by:N(h.by))}</b> ${e(h.txt)} <span class="meta">· ${fmt(h.ts)}</span></div>`).join('');
+ const showC=t.type!='poll'||cm.length;
  return `<button class="btn ghost sm noprint" onclick="go('')">← Voltar</button>
- <div class="card" style="margin-top:12px"><div style="display:flex;gap:12px;align-items:center">${av(t.author)}<div>${TYPES[t.type]}<div class="meta">${e(t.author.name)} · ${fmt(t.ts)}</div></div></div>
+ <div class="card" style="margin-top:12px"><div style="display:flex;gap:12px;align-items:center">${av(t.author)}<div>${TYPES[t.type]||''}<div class="meta">${e(N(t.author))} · ${fmt(t.ts)}</div></div></div>
  <h2>${t.pinned?'📌 ':''}${e(t.title)}</h2>
- ${off?`<div class="banner">📦 Encerrado e arquivado por <b>${e((f.by&&f.by.name)||'')}</b> em ${fmt(f.at)}${f.note?`<br><b>Conclusão:</b> ${rich(f.note)}`:''}</div>`:''}
- <div class="body">${rich(t.body)}</div>${extra}
+ ${off?`<div class="banner">📦 ${f.auto?`Enquete encerrada automaticamente ao fim do prazo (${fmt(t.ends||f.at)})`:`Encerrado e arquivado por <b>${e(N(f.by))}</b> em ${fmt(f.at)}`}${note?`<br><b>Conclusão:</b> ${rich(note)}`:''}</div>`:''}
+ <div class="body">${rich(t.body)}</div>${atts(t.files)}${extra}
  <div class="noprint" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
  <button class="btn ghost sm" onclick="print()">🖨 Imprimir / PDF</button><button class="btn ghost sm" onclick="navigator.clipboard.writeText(location.href);this.textContent='✔ Link copiado'">🔗 Copiar link</button>
  ${isAdmin()&&!off?`<button class="btn ghost sm" onclick="pin('${i0}')">${t.pinned?'Desafixar':'📌 Fixar'}</button>`:''}
  ${can&&!off?`<button class="btn ghost sm" onclick="archive('${i0}')">📦 Encerrar</button>`:''}
  ${isAdmin()?`<button class="btn ghost sm danger" onclick="del('${i0}')">Apagar</button>`:''}</div></div>
- <div class="card"><b>${cm.length} comentário(s)</b>${cm.map(c=>`<div class="cm">${av(c.author)}<div style="flex:1"><b>${e(c.author.name)}</b> <span class="meta">${ago(c.ts)}</span><div class="body" style="margin:2px 0">${rich(c.text)}</div></div>${!off&&!c.legacy&&(c.author.uid==u.uid||isAdmin())?`<button class="btn ghost sm danger noprint" onclick="delC('${i0}','${sid(c.id)}')">✕</button>`:''}</div>`).join('')}
- ${off?'<p class="meta">🔒 Item encerrado: comentários desativados.</p>':`<textarea id="ct" class="f noprint" rows="3" maxlength="5000" placeholder="Escreva um comentário… use @nome para mencionar (Ctrl+Enter envia)" onkeydown="if(event.ctrlKey&&event.key=='Enter')comment('${i0}')"></textarea><button class="btn noprint" onclick="comment('${i0}')">Comentar</button>`}</div>
+ ${showC?`<div class="card"><b>${cm.length} comentário(s)</b>${cm.map(c=>cmH(c,i0)).join('')}
+ ${t.type=='poll'?'<p class="meta">💬 Enquetes não recebem comentários.</p>':off?'<p class="meta">🔒 Item encerrado: comentários desativados.</p>':composerC(i0)}</div>`:''}
  <details class="card"><summary><b>🕘 Histórico (${hl.length})</b></summary><div style="margin-top:10px">${hist||'<span class="meta">Sem registros.</span>'}</div></details>`;
 }
 
@@ -418,65 +650,153 @@ function act(id,upd,txt,more){
  more&&more(b,tr);
  return b.commit().then(()=>true,x=>{saveFail(x);return false});
 }
+/* Escolha única: um clique marca (e troca) a opção. Múltipla: cada clique marca/desmarca aquela opção. */
 const vote=(id,i)=>{const t=T(id);if(!t||arch(t)||!t.options||!t.options[i])return;
- const me=S.votes.find(v=>v.id==S.user.uid),same=!!me&&me.opt===i;
- act(id,{},same?'retirou o voto':`votou em “${String(t.options[i].t).slice(0,80)}”`,(b,tr)=>{
-  const r=tr.collection('votes').doc(S.user.uid);
-  same?b.delete(r):b.set(r,{name:S.user.name,opt:i,ts:TS()})})};
-const comment=id=>{const el=$('ct');if(!el)return;const x=el.value.trim();if(!x)return;
+ const me=S.votes.find(v=>v.id==S.user.uid),cur=me?vopts(me):[],has=cur.includes(i),lbl=`“${String(t.options[i].t).slice(0,80)}”`;
+ const nx=t.multi?(has?cur.filter(x=>x!==i):[...cur,i].sort((a,b)=>a-b)):(has?[]:[i]);
+ act(id,{},(has?'retirou o voto em ':'votou em ')+lbl,(b,tr)=>{const r=tr.collection('votes').doc(S.user.uid);
+  nx.length?b.set(r,{name:S.user.name,opts:nx,ts:TS()}):b.delete(r)})};
+async function comment(id){
+ const el=$('ct'),t=T(id);if(!el||!t||t.type=='poll'||S.busy)return;
+ const x=el.value.trim(),fl=S.catt.tid==id?S.catt.list:[];
+ if(!x&&!fl.length)return;
  if(x.length>5000)return alert('Comentário muito longo (máx. 5000 caracteres).');
- act(id,{},'comentou',(b,tr)=>b.set(tr.collection('comments').doc(),{author:who(),text:x,ts:TS()})).then(ok=>{if(ok){S.draft=null;const c=$('ct');if(c)c.value=''}})};
-const delC=(id,c)=>confirm('Apagar comentário?')&&act(id,{},'apagou um comentário',(b,tr)=>b.delete(tr.collection('comments').doc(c)));
+ S.draft={id,v:el.value,f:false};S.busy=true;render();
+ try{
+  const files=await upAll(fl);
+  const ok=await act(id,{},'comentou',(b,tr)=>{const r=tr.collection('comments').doc();
+   b.set(r,{author:who(),text:x,files,ts:TS()});
+   notify(b,{tid:id,cid:r.id,title:t.title,text:x||'(anexo)'},mentionsIn(x))});
+  if(ok){S.draft=null;S.catt={tid:null,list:[]};const c=$('ct');if(c)c.value=''}
+ }catch(err){saveFail(err)}
+ finally{S.busy=false;render()}
+}
+/* Só o administrador remove comentários; fica o aviso "removido pelo administrador" */
+async function delC(id,cid){
+ if(!isAdmin())return;
+ const t=T(id),c=(S.comments[id]||[]).find(x=>x.id==cid);if(!t||!c)return;
+ if(!confirm('Remover este comentário?\nNo lugar dele ficará o aviso “Comentário removido pelo administrador”.'))return;
+ const tr=col.doc(id),b=db.batch();
+ b.update(tr.collection('comments').doc(cid),{text:'',files:[],removed:{by:who(),at:TS()}});
+ if(!(t.archived||t.closed||t.done))b.update(tr,{act:TS()});
+ b.set(tr.collection('hist').doc(),{by:who(),txt:'removeu um comentário (administrador)',ts:TS()});
+ try{await b.commit();rmFiles(c.files)}catch(x){saveFail(x)}
+}
 const pin=id=>{if(!isAdmin())return;const t=T(id);if(!t)return;act(id,{pinned:!t.pinned},t.pinned?'desafixou o item':'fixou o item')};
 /* Encerrar = arquivar (ação única e definitiva) */
 const finish=(id,note)=>act(id,{archived:{by:who(),at:TS(),note:note||''}},'encerrou e arquivou'+(note?` (${note.slice(0,60)})`:''));
-const archive=id=>{const n=prompt('Encerrar e arquivar este item.\nConclusão / decisão final (opcional):');if(n===null)return;
- if(n.trim().length>2000)return alert('Conclusão muito longa (máx. 2000 caracteres).');finish(id,n.trim())};
-/* Apagar: remove também comentários, votos e histórico do item (subcoleções não somem sozinhas) */
+async function archive(id){
+ const t=T(id);if(!t)return;
+ if(t.type=='poll'){
+  let vs;try{vs=(await col.doc(id).collection('votes').get()).docs.map(dat)}catch(x){return saveFail(x)}
+  const r=pollResult(t,vs);
+  if(!confirm('Encerrar e arquivar esta enquete agora?\n\nConclusão (definida pela opção mais votada):\n'+r))return;
+  return finish(id,r);
+ }
+ const n=prompt('Encerrar e arquivar este item.\nConclusão / decisão final (opcional):');if(n===null)return;
+ if(n.trim().length>2000)return alert('Conclusão muito longa (máx. 2000 caracteres).');finish(id,n.trim());
+}
+/* Apagar: remove também comentários, votos, histórico e anexos do item (subcoleções não somem sozinhas) */
 async function del(id){
  if(!isAdmin())return;
- if(!confirm('Apagar definitivamente? Comentários, votos e histórico também serão perdidos.\nDica: prefira encerrar.'))return;
- const tr=col.doc(id);
+ if(!confirm('Apagar definitivamente? Comentários, votos, histórico e anexos também serão perdidos.\nDica: prefira encerrar.'))return;
+ const tr=col.doc(id),t=T(id),fl=[...((t&&Array.isArray(t.files))?t.files:[])];
  try{
   for(const c of ['comments','votes','hist']){
    const s=await tr.collection(c).get();
+   if(c=='comments')s.docs.forEach(d=>{const x=d.data().files;if(Array.isArray(x))fl.push(...x)});
    for(let i=0;i<s.docs.length;i+=400){const b=db.batch();s.docs.slice(i,i+400).forEach(d=>b.delete(d.ref));await b.commit()}
   }
-  await tr.delete();go('');
+  await tr.delete();go('');rmFiles(fl);
  }catch(x){saveFail(x)}
 }
 let ctype='topic';
 function compose(type){
+ const keep=type&&$('nt')?{t:$('nt').value,b:$('nb').value}:null;
+ if(!type)S.natt=[];
  ctype=type||ctype;
  $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card"><h3 style="margin-top:0">Novo item</h3>
  <div class="tabs">${Object.entries(TYPES).map(([k,v])=>`<button class="btn ${ctype==k?'':'ghost'}" onclick="compose('${k}')">${v}</button>`).join('')}</div>
  <input id="nt" class="f" maxlength="200" placeholder="Título">
- <textarea id="nb" class="f" rows="5" maxlength="10000" placeholder="Descrição / mensagem (links e @menções são destacados)"></textarea>
- ${ctype=='poll'?'<textarea id="no" class="f" rows="4" placeholder="Uma opção por linha (mín. 2, máx. 20)"></textarea>':''}
- ${ctype=='reminder'?`<label class="meta">Prazo</label><input id="nd" type="date" class="f"><label class="meta">Responsável (opcional)</label>
- <select id="na" class="f"><option value="">— ninguém —</option>${people().map(([i,n])=>`<option value="${e(i)}|${e(n)}">${e(n)}</option>`).join('')}</select>`:''}
+ <textarea id="nb" class="f" rows="5" maxlength="10000" placeholder="Descrição / mensagem — digite @ para mencionar alguém ou @todos para avisar todos" oninput="mq(this)" onkeydown="mk(event)" onblur="setTimeout(mclose,200)"></textarea>
+ <div class="att" id="natt"></div>
+ <input id="nf" type="file" hidden multiple accept="application/pdf,image/*" onchange="pick(this,'nb')">
+ <button class="btn ghost sm" onclick="$('nf').click()">📎 Anexar PDF ou imagem</button>
+ ${ctype=='poll'?`<textarea id="no" class="f" rows="4" placeholder="Uma opção por linha (mín. 2, máx. 20)" style="margin-top:10px"></textarea>
+ <div style="display:flex;gap:16px;flex-wrap:wrap;margin:6px 0"><label><input type="radio" name="mu" value="0" checked> Escolha única</label><label><input type="radio" name="mu" value="1"> Múltipla escolha</label></div>
+ <label class="meta">Encerrar automaticamente em (opcional)</label><input id="ne" type="datetime-local" class="f">
+ <p class="meta" style="margin:0">Ao encerrar (no prazo ou manualmente), a conclusão será a opção mais votada. Enquetes não recebem comentários.</p>`:''}
+ ${ctype=='reminder'?`<label class="meta" style="display:block;margin-top:10px">Prazo</label><input id="nd" type="date" class="f"><label class="meta">Atribuir a (opcional)</label>
+ <select id="na" class="f"><option value="">— ninguém —</option>${dir().map(([i,n])=>`<option value="${e(i)}">${e(n)}${i==S.user.uid?' (você)':''}</option>`).join('')}</select>`:''}
  <p class="meta">Atenção: depois de publicado, o item não pode ser editado.</p>
- <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn" onclick="publish()">Publicar</button></div></div></div>`;
+ <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn" id="pbtn" onclick="publish()">Publicar</button></div></div></div>`;
+ if(keep){$('nt').value=keep.t;$('nb').value=keep.b}
+ drawNatt();
 }
-const closeM=()=>$('modal').innerHTML='';
+const closeM=()=>{mclose();$('modal').innerHTML=''};
+async function publish(){
+ if(S.busy)return;
+ const title=$('nt').value.trim(),body=$('nb').value.trim();if(!title)return alert('Informe um título.');
+ if(title.length>200||body.length>10000)return alert('Texto longo demais.');
+ const tr=col.doc(),o={type:ctype,title,body,author:who(),ts:TS(),act:TS(),pinned:false,archived:null};
+ let extra=null;
+ if(ctype=='reminder'){
+  if(!$('nd').value)return alert('Informe o prazo.');o.due=$('nd').value;
+  const a=$('na').value;o.assignee=a&&S.people[a]?{uid:a,name:S.people[a].name}:null;
+  if(o.assignee)extra={[a]:'assign'}}
+ if(ctype=='poll'){
+  const op=$('no').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if(op.length<2)return alert('Informe ao menos 2 opções.');
+  if(op.length>20||op.some(s=>s.length>200))return alert('No máximo 20 opções, de até 200 caracteres cada.');
+  o.options=op.map(t=>({t}));
+  const mu=document.querySelector('input[name="mu"]:checked');o.multi=!!(mu&&mu.value=='1');
+  const ev=$('ne').value;
+  if(ev){const w=new Date(ev).getTime();if(!(w>Date.now()+6e4))return alert('O prazo da enquete precisa ser uma data e hora no futuro.');o.ends=firebase.firestore.Timestamp.fromMillis(w)}
+  else o.ends=null}
+ S.busy=true;const pb=$('pbtn');if(pb){pb.disabled=true;pb.textContent='Publicando…'}
+ try{
+  o.files=await upAll(S.natt);
+  const b=db.batch();
+  b.set(tr,o);
+  b.set(tr.collection('hist').doc(),{by:who(),txt:'criou o item',ts:TS()});
+  notify(b,{tid:tr.id,cid:null,title,text:body},mentionsIn(title+'\n'+body),extra);
+  await b.commit();
+  S.natt=[];closeM();S.view='andamento';go('');
+ }catch(x){saveFail(x)}
+ finally{S.busy=false;const p=$('pbtn');if(p){p.disabled=false;p.textContent='Publicar'}}
+}
+addEventListener('keydown',ev=>{if(ev.key=='Escape')closeM()});
 
-/* ---------- Foto de perfil ----------
-   A imagem é recortada em quadrado e reduzida a 256×256 px (JPEG) no próprio navegador
+/* ---------- Meu perfil: nome e foto ----------
+   A foto é recortada em quadrado e reduzida a 256×256 px (JPEG) no próprio navegador
    e gravada em avatars/{uid}. Nada é enviado antes de a pessoa escolher o arquivo. */
 function profile(){
  const has=!!S.avatars[S.user.uid];
- $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card" style="max-width:400px;text-align:center"><h3 style="margin-top:0">Foto de perfil</h3>
+ $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card" style="max-width:420px;text-align:center"><h3 style="margin-top:0">Meu perfil</h3>
  <div style="display:flex;justify-content:center;margin:10px 0">${av(S.user,'xl')}</div>
- <p class="meta" style="margin:0 0 12px">A foto aparece ao lado do seu nome nos tópicos, comentários e no cabeçalho. Ela é recortada em quadrado e reduzida automaticamente.</p>
  <input id="pf" type="file" accept="image/*" hidden onchange="setPhoto(this)">
- <div id="err" class="err" style="margin:0 0 8px"></div>
  <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-  <button class="btn" onclick="$('pf').click()">${has?'Trocar foto':'Escolher foto'}</button>
-  ${has?'<button class="btn ghost danger" onclick="delPhoto()">Remover foto</button>':''}
-  <button class="btn ghost" onclick="closeM()">Fechar</button></div></div></div>`;
+  <button class="btn ghost sm" onclick="$('pf').click()">${has?'Trocar foto':'Escolher foto'}</button>
+  ${has?'<button class="btn ghost sm danger" onclick="delPhoto()">Remover foto</button>':''}</div>
+ <p class="meta" style="margin:8px 0 14px">A foto é recortada em quadrado e reduzida automaticamente.</p>
+ <label class="meta" style="display:block;text-align:left">Seu nome (como aparece no portal)</label>
+ <div style="display:flex;gap:8px;align-items:center"><input id="pn" class="f" maxlength="80" autocomplete="name" value="${e(S.user.name)}" onkeydown="if(event.key=='Enter')saveName()"><button class="btn" onclick="saveName()">Salvar</button></div>
+ <div id="err" class="err" style="margin:4px 0 8px"></div>
+ <button class="btn ghost" onclick="closeM()">Fechar</button></div></div>`;
 }
-const loadImg=f=>new Promise((ok,no)=>{const u=URL.createObjectURL(f),i=new Image();
- i.onload=()=>{URL.revokeObjectURL(u);ok(i)};i.onerror=()=>{URL.revokeObjectURL(u);no(new Error('Não foi possível ler esta imagem. Use um arquivo JPG ou PNG.'))};i.src=u});
+async function saveName(){
+ const n=cleanName($('pn').value);showErr('');
+ if(n.length<2)return showErr('Informe seu nome (ao menos 2 caracteres).');
+ if(n.length>80)return showErr('Nome muito longo (máx. 80 caracteres).');
+ if(n===S.user.name)return showErr('Nenhuma alteração.',1);
+ try{
+  const ur=db.collection('users').doc(S.user.uid),ex=(await ur.get()).exists,b=db.batch();
+  ex?b.update(ur,{name:n}):b.set(ur,{name:n,email:S.user.email,created:Date.now(),approved:false});
+  b.set(db.collection('people').doc(S.user.uid),{name:n,ts:TS()});
+  await b.commit();
+  S.user.name=n;wroteName=n;render();profile();showErr('Nome atualizado.',1);
+ }catch(x){showErr(x&&x.code=='permission-denied'?'Sem permissão para alterar o nome (verifique se as regras novas foram publicadas no Firestore).':msg(x))}
+}
 async function setPhoto(inp){
  const f=inp.files&&inp.files[0];inp.value='';if(!f)return;showErr('');
  if(!/^image\//.test(f.type))return showErr('Escolha um arquivo de imagem.');
@@ -499,21 +819,6 @@ async function delPhoto(){
  try{await db.collection('avatars').doc(S.user.uid).delete();delete S.avatars[S.user.uid];render();profile()}
  catch(x){showErr(x&&x.code=='permission-denied'?'Sem permissão para remover a foto.':msg(x))}
 }
-function publish(){
- const title=$('nt').value.trim(),body=$('nb').value.trim();if(!title)return alert('Informe um título.');
- if(title.length>200||body.length>10000)return alert('Texto longo demais.');
- const tr=col.doc(),b=db.batch();
- const o={type:ctype,title,body,author:who(),ts:TS(),act:TS(),pinned:false,archived:null};
- if(ctype=='reminder'){if(!$('nd').value)return alert('Informe o prazo.');o.due=$('nd').value;const a=$('na').value.split('|');o.assignee=a[0]?{uid:a[0],name:a.slice(1).join('|')}:null}
- if(ctype=='poll'){const op=$('no').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  if(op.length<2)return alert('Informe ao menos 2 opções.');
-  if(op.length>20||op.some(s=>s.length>200))return alert('No máximo 20 opções, de até 200 caracteres cada.');
-  o.options=op.map(t=>({t}))}
- b.set(tr,o);
- b.set(tr.collection('hist').doc(),{by:who(),txt:'criou o item',ts:TS()});
- b.commit().then(()=>{closeM();S.view='andamento';go('')},saveFail);
-}
-addEventListener('keydown',ev=>{if(ev.key=='Escape')closeM()});
 render();
 </script>
 </body>
