@@ -1454,7 +1454,7 @@ async function callJoin(id){
   const c=$('call');c.hidden=false;document.body.classList.add('incall');$('callt').textContent=x.title;$('callbox').innerHTML='';
   const o={roomName:room,parentNode:$('callbox'),width:'100%',height:'100%',lang:'pt-BR',
    userInfo:{displayName:name,email:S.user.email},
-   configOverwrite:{prejoinPageEnabled:false,prejoinConfig:{enabled:false},startWithVideoMuted:true,disableDeepLinking:true,subject:x.title},
+   configOverwrite:{prejoinPageEnabled:false,prejoinConfig:{enabled:false},startWithAudioMuted:false,startAudioMuted:99,startWithVideoMuted:true,disableDeepLinking:true,subject:x.title},
    interfaceConfigOverwrite:{MOBILE_APP_PROMO:false}};
   if(jwt)o.jwt=jwt;
   const api=new JitsiMeetExternalAPI('8x8.vc',o);
