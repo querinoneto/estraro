@@ -20,7 +20,8 @@ CONFIGURAÇÃO (objeto CONFIG no início do script):
    A aprovação vale por e-mail (coleção "allowed"): a mesma pessoa nunca precisa ser aprovada duas vezes.
 8. Coleções usadas: "avatars" (fotos), "people" (diretório com nome e cargo), "notifs" (menções e avisos),
    "files" (anexos em PDF/imagem, em pedaços no próprio Firestore), "links" (vínculos entre itens) e
-   "notes" (bloco de anotações individual: só a própria pessoa lê). Tudo está coberto pelo firestore.rules:
+   "notes" (bloco de anotações individual, cifrado no aparelho com a senha do bloco: criptografia de ponta a ponta)
+   e "sessions" (sessões ao vivo: pauta, fila de fala, votação instantânea e ata). Tudo está coberto pelo firestore.rules:
    basta colar e publicar a versão mais recente.
 -->
 <style>
@@ -72,6 +73,19 @@ button.nm{text-decoration:none;color:var(--tx);font-size:14px}button.nm:hover{te
 .lka{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
 .row.on{background:var(--gl)}
 details.dz{margin-top:16px;text-align:left;border-top:1px solid var(--bd);padding-top:10px}details.dz summary{cursor:pointer;color:var(--red);font-size:14px}
+.tag.live,.banner.live b{color:#b42318}.tag.live{background:#fde8e6}.banner.live{border-left-color:#b42318;background:#fff4f2}
+.sbadge{font-size:12px;font-weight:700;border-radius:10px;padding:2px 9px;background:#eef1ef;color:var(--mu);white-space:nowrap}
+.sbadge.live{background:#fde8e6;color:#b42318}.sbadge.closed{background:var(--gl);color:var(--gt)}
+.chair{border:2px solid var(--g)}.chair h3{margin:0 0 8px}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:6px 0 12px}.kpi div{border:1px solid var(--bd);border-radius:10px;padding:8px 10px}.kpi b{display:block;font-size:18px}
+.ok{color:var(--gt)}.bad{color:#b42318}
+.tick{font-variant-numeric:tabular-nums;font-weight:700}.tick.over{color:#b42318}
+.pt{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--bd)}.pt:last-child{border:0}.pt.cur{background:var(--gl);border-radius:8px;padding:8px}
+.pt .n{width:26px;height:26px;border-radius:50%;background:#eef1ef;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex:none}
+.pt.cur .n{background:var(--g);color:#fff}.pt.done .n{background:var(--gl);color:var(--gt)}
+.ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}.ctl input.f{width:auto;flex:1;min-width:140px;margin:0}
+.sec{margin-top:14px;padding-top:10px;border-top:1px solid var(--bd)}
+.ata{white-space:pre-wrap;word-wrap:break-word}
 .removed{color:var(--mu);font-style:italic;margin:2px 0}
 .wrap{max-width:1080px;margin:20px auto;padding:0 16px;display:grid;grid-template-columns:240px 1fr;gap:20px}
 aside .box,.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:14px}
@@ -152,7 +166,7 @@ const CONFIG={
 /* "reminder" é o nome interno das tarefas (mantido para os itens já existentes continuarem funcionando) */
 const TYPES={topic:'💬 Tópico',poll:'📊 Enquete',reminder:'📋 Tarefa'};
 const VIEWS={andamento:'📂 Em andamento',encerrados:'📦 Encerrados'};
-const S={user:null,avatars:{},people:{},links:[],notes:[],ned:null,origin:null,lp:null,pl:false,notifs:[],topics:[],comments:{},votes:[],hist:[],view:'andamento',q:'',type:'all',sort:'act',auth:'in',fail:'',users:[],allowed:{},cur:null,draft:null,focus:null,busy:false,catt:{tid:null,list:[]},natt:[]};
+const S={user:null,avatars:{},people:{},links:[],notes:[],ndec:{},ncfg:undefined,sessions:[],sp:[],sq:[],sb:[],min:null,kv:{},ned:null,origin:null,lp:null,pl:false,notifs:[],topics:[],comments:{},votes:[],hist:[],view:'andamento',q:'',type:'all',sort:'act',auth:'in',fail:'',users:[],allowed:{},cur:null,draft:null,focus:null,busy:false,catt:{tid:null,list:[]},natt:[]};
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const reEsc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const fold=s=>String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
@@ -198,7 +212,7 @@ if(typeof firebase==='undefined'||!CONFIG.firebase){
 firebase.initializeApp(CONFIG.firebase);
 const db=firebase.firestore(),col=db.collection('topics'),au=firebase.auth(),TS=()=>firebase.firestore.FieldValue.serverTimestamp();
 au.languageCode='pt-BR';
-let dying=false,subs=[],unsubU=null,unsubP=null,unsubA=null,reg=false,wid=null,wun=[],wroteName=null;
+let NK=null,NKraw=null,dying=false,subs=[],unsubU=null,unsubP=null,unsubA=null,reg=false,wid=null,wun=[],wroteName=null;
 const saveFail=x=>alert('Não foi possível salvar: '+((x&&x.code=='permission-denied')?'sem permissão (verifique as regras do Firestore e se o item ainda está aberto).':((x&&x.message)||x)));
 const readFail=x=>{S.fail=x&&x.code=='permission-denied'?'Sem permissão para ler os dados. Verifique se o Firestore foi criado e se as regras foram publicadas.':'Falha ao carregar os dados: '+((x&&x.message)||x);render()};
 /* Datas vêm do servidor (Timestamp); aqui viram milissegundos */
@@ -218,7 +232,10 @@ const store={
    /* Vínculos entre itens (desdobramentos e itens relacionados) */
    db.collection('links').onSnapshot(s=>{S.links=s.docs.map(dat);render()},()=>{}),
    /* Bloco de anotações: só a própria pessoa lê (garantido pelas regras) */
-   noteBase().collection('items').orderBy('upd','desc').onSnapshot(s=>{S.notes=s.docs.map(d=>{const x=dat(d);x.upd=ms(x.upd);x.ts=ms(x.ts);return x});render()},()=>{}),
+   noteBase().collection('items').orderBy('upd','desc').onSnapshot(s=>{S.notes=s.docs.map(d=>{const x=dat(d);x.upd=ms(x.upd);x.ts=ms(x.ts);return x});if(NK)decAll().then(()=>{render();migratePlain()});render()},()=>{}),
+   noteBase().collection('cfg').doc('key').onSnapshot(s=>{S.ncfg=s.exists?s.data():null;render()},()=>{}),
+   /* Sessões ao vivo */
+   db.collection('sessions').onSnapshot(s=>{S.sessions=s.docs.map(normS);render()},()=>{}),
    notifCol(S.user.uid).orderBy('ts','desc').limit(100).onSnapshot(s=>{S.notifs=s.docs.map(d=>{const x=dat(d);x.ts=ms(x.ts);return x});render()},()=>{}),
    col.onSnapshot(s=>{S.fail='';S.topics=s.docs.map(normT);autoClose();render()},readFail),
    db.collectionGroup('comments').onSnapshot(s=>{
@@ -247,7 +264,8 @@ const store={
   ids.forEach(id=>b.update(db.collection('users').doc(id),ok?{approved:true,rejected:false}:{approved:false,rejected:true}));
   return b.commit().catch(x=>{if(!quiet)saveFail(x)})}
 };
-const stopData=()=>{subs.forEach(f=>f());subs=[];unsubU&&unsubU();unsubU=null;store.watch(null);
+const stopData=()=>{subs.forEach(f=>f());subs=[];unsubU&&unsubU();unsubU=null;store.watch(null);watchS(null);
+ NK=NKraw=null;S.ndec={};S.ncfg=undefined;S.sessions=[];S.min=null;
  S.avatars={};S.people={};S.links=[];S.notes=[];S.ned=null;S.pl=false;S.ul=false;S.notifs=[];S.topics=[];S.comments={};S.users=[];S.allowed={}};
 /* Mantém o próprio nome no diretório de pessoas */
 function syncMe(){const u=S.user;if(!u||u.status!='ok'||!S.pl)return;const p=S.people[u.uid];
@@ -346,6 +364,9 @@ const unread=()=>S.notifs.filter(n=>!n.read).length;
 function render(){
  const ok=!!(S.user&&S.user.status=='ok');
  const o=$('ct');if(o&&S.cur)S.draft={id:S.cur,v:o.value,f:document.activeElement===o};
+ const smEl=$('sm');if(smEl&&S.min)S.min.v=smEl.value;
+ KEEP.forEach(k=>{const x=$(k);if(x)S.kv[k]=x.value});
+ {const ae=document.activeElement;S.kf=ae&&ae.id&&(KEEP.includes(ae.id)||ae.id=='sm')?{id:ae.id,ss:ae.selectionStart,se:ae.selectionEnd,st:ae.scrollTop}:null}
  const xt=$('xt');if(xt&&S.ned){const a=document.activeElement;S.ned.t=xt.value;S.ned.b=$('xb').value;S.ned.f=a&&(a.id=='xt'||a.id=='xb')?a.id:null;S.ned.ss=S.ned.f?a.selectionStart:null}
  document.body.classList.toggle('anon',!ok);
  if(S.view=='cadastros'&&!isAdmin())S.view='andamento';
@@ -377,14 +398,17 @@ function render(){
   </div></div>`;return}
  if(!ok){S.cur=null;store.watch(null);return gate()}
  const m=location.hash.match(/^#t\/([\w-]+)$/),t=m&&T(m[1]);
- store.watch(t?t.id:null);
+ const m2=location.hash.match(/^#s\/([\w-]+)$/),se=m2&&SS(m2[1]);
+ store.watch(t?t.id:null);watchS(se?se.id:null);if(se)readFor(se.id);
  S.cur=t?t.id:null;
  if(t&&S.catt.tid&&S.catt.tid!==t.id)S.catt={tid:null,list:[]};
  if(t){const s=seen();s[t.id]=t.act||t.ts;try{localStorage['seen_'+S.user.uid]=JSON.stringify(s)}catch(x){}readFor(t.id)}
- $('app').innerHTML=`<div class="wrap"><aside>${side()}</aside><main>${t?detail(t):(S.view=='cadastros'&&isAdmin()?usersPanel():S.view=='mencoes'?mentionsPanel():S.view=='minhas'?myTasks():S.view=='bloco'?notebook():list())}</main></div>`;
+ $('app').innerHTML=`<div class="wrap"><aside>${side()}</aside><main>${t?detail(t):se?sessionView(se):m2?'<div class="empty">Carregando a sessão…</div>':(S.view=='sessoes'?sessionsList():S.view=='cadastros'&&isAdmin()?usersPanel():S.view=='mencoes'?mentionsPanel():S.view=='minhas'?myTasks():S.view=='bloco'?notebook():list())}</main></div>`;
  /* mantém o comentário que estava sendo digitado quando chegam atualizações em tempo real */
  const c=$('ct');
  if(c&&S.draft&&S.draft.id==S.cur){c.value=S.draft.v;if(S.draft.f){c.focus();c.setSelectionRange(c.value.length,c.value.length)}}
+ KEEP.forEach(k=>{const x=$(k);if(x&&S.kv[k]!=null)x.value=S.kv[k]});
+ if(S.kf&&$(S.kf.id)){const x=$(S.kf.id);x.focus();try{x.setSelectionRange(S.kf.ss,S.kf.se)}catch(_){}x.scrollTop=S.kf.st}
  if(S.ned&&S.ned.f&&$(S.ned.f)){const x=$(S.ned.f),q=S.ned.ss!=null?S.ned.ss:x.value.length;x.focus();try{x.setSelectionRange(q,q)}catch(_){}}
  /* vindo de uma menção: rola até o comentário e o destaca */
  if(t&&S.focus){const f=S.focus;S.focus=null;setTimeout(()=>{const x=$('c-'+sid(f));if(x){x.scrollIntoView({block:'center'});x.classList.add('flash')}},60)}
@@ -528,14 +552,14 @@ const inView=(t,v)=>v=='encerrados'?arch(t):!arch(t);
 function side(){
  const rem=S.topics.filter(t=>isRem(t)&&!arch(t)&&t.due).sort((a,b)=>a.due>b.due?1:-1).slice(0,4),un=unread();
  return `<button class="btn newbtn" style="width:100%;margin-bottom:14px" onclick="compose()">＋ Novo</button>
- <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}<button class="cat ${S.view=='minhas'?'on':''}" onclick="S.view='minhas';go('')">📋 Minhas tarefas${myOpen()?`<span class="tag">${myOpen()}</span>`:''}</button><button class="cat ${S.view=='mencoes'?'on':''}" onclick="S.view='mencoes';go('')">🔔 Menções${un?`<span class="tag">${un} nova(s)</span>`:''}</button><button class="cat ${S.view=='bloco'?'on':''}" onclick="S.view='bloco';go('')">📓 Bloco de anotações<span class="meta">🔒</span></button>${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pendU().length?`<span class="tag">${pendU().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
+ <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}<button class="cat ${S.view=='minhas'?'on':''}" onclick="S.view='minhas';go('')">📋 Minhas tarefas${myOpen()?`<span class="tag">${myOpen()}</span>`:''}</button><button class="cat ${S.view=='mencoes'?'on':''}" onclick="S.view='mencoes';go('')">🔔 Menções${un?`<span class="tag">${un} nova(s)</span>`:''}</button><button class="cat ${S.view=='sessoes'?'on':''}" onclick="S.view='sessoes';go('')">🎙 Sessões${S.sessions.some(x=>x.status=='live')?'<span class="tag live">ao vivo</span>':''}</button><button class="cat ${S.view=='bloco'?'on':''}" onclick="S.view='bloco';go('')">📓 Bloco de anotações<span class="meta">🔒</span></button>${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pendU().length?`<span class="tag">${pendU().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
  <div class="box rem-box"><h4>Próximos prazos</h4>${rem.length?rem.map(r=>`<div style="margin:6px 0;cursor:pointer" onclick="go('t/${sid(r.id)}')"><b>${e(r.title)}</b><div class="meta ${r.due<today()?'due':''}">${r.due<today()?'Vencida · ':''}${fd(r.due)}${asg(r).length?' · '+names(asg(r),1):''} · ${STL[stOf(r)]}</div></div>`).join(''):'<span class="meta">Nenhuma tarefa pendente 🎉</span>'}</div>`;
 }
 function list(){
  const q=S.q.toLowerCase(),v=S.view,sd=seen();
  let L=S.topics.filter(t=>inView(t,v)&&(S.type=='all'||t.type==S.type)&&(!q||((t.title||'')+(t.body||'')+N(t.author)+asg(t).map(N).join(' ')+cmts(t).map(c=>c.text||'').join(' ')+(t.files||[]).map(f=>f&&f.name).join(' ')).toLowerCase().includes(q)));
  L.sort((a,b)=>v=='encerrados'?fin(b).at-fin(a).at:(b.pinned?1:0)-(a.pinned?1:0)||(S.type=='reminder'?(a.due>b.due?1:-1):S.sort=='act'?(b.act||b.ts)-(a.act||a.ts):b.ts-a.ts));
- return `${S.fail?`<div class="banner err">⚠ ${e(S.fail)}</div>`:''}${isAdmin()&&pendU().length?`<div class="banner">👥 <b>${pendU().length}</b> cadastro(s) aguardando sua aprovação. <button class="lnk" onclick="S.view='cadastros';go('')">Revisar agora</button></div>`:''}${unread()?`<div class="banner">🔔 Você tem <b>${unread()}</b> menção(ões) não lida(s). <button class="lnk" onclick="S.view='mencoes';go('')">Ver agora</button></div>`:''}
+ return `${S.fail?`<div class="banner err">⚠ ${e(S.fail)}</div>`:''}${S.sessions.filter(x=>x.status=='live').map(x=>`<div class="banner live">Sessão ao vivo agora: <b>${e(x.title)}</b>. <button class="lnk" onclick="go('s/${sid(x.id)}')">Entrar</button></div>`).join('')}${isAdmin()&&pendU().length?`<div class="banner">👥 <b>${pendU().length}</b> cadastro(s) aguardando sua aprovação. <button class="lnk" onclick="S.view='cadastros';go('')">Revisar agora</button></div>`:''}${unread()?`<div class="banner">🔔 Você tem <b>${unread()}</b> menção(ões) não lida(s). <button class="lnk" onclick="S.view='mencoes';go('')">Ver agora</button></div>`:''}
  <h2 style="margin:0 0 10px">${VIEWS[v]}</h2>
  <div class="tabs">${[['all','Todos'],['topic','💬 Tópicos'],['poll','📊 Enquetes'],['reminder','📋 Tarefas']].map(([k,x])=>`<button class="btn ${S.type==k?'':'ghost'}" onclick="S.type='${k}';render()">${x}</button>`).join('')}
  </div>
@@ -672,12 +696,13 @@ function readFor(tid){
 function openN(id){
  const n=S.notifs.find(x=>x.id==id);if(!n)return;
  if(!n.read)notifCol(S.user.uid).doc(n.id).update({read:true}).catch(()=>{});
+ if(n.kind=='session'||n.kind=='live'){if(!SS(n.tid))return alert('Esta sessão não existe mais.');return go('s/'+sid(n.tid))}
  if(!T(n.tid))return alert('Este item não existe mais (foi apagado).');
  S.focus=n.cid||null;go('t/'+sid(n.tid));
 }
 function readAll(){const b=db.batch();S.notifs.filter(n=>!n.read).forEach(n=>b.update(notifCol(S.user.uid).doc(n.id),{read:true}));b.commit().catch(saveFail)}
 function mentionsPanel(){
- const L=S.notifs,un=unread(),lab=n=>n.kind=='link'?'desdobrou um item seu em':n.kind=='status'?'atualizou o status da tarefa':n.kind=='assign'?'atribuiu a você a tarefa':n.kind=='all'?'mencionou @todos em':'mencionou você em';
+ const L=S.notifs,un=unread(),lab=n=>n.kind=='session'?'convocou a sessão':n.kind=='live'?'abriu a sessão':n.kind=='link'?'desdobrou um item seu em':n.kind=='status'?'atualizou o status da tarefa':n.kind=='assign'?'atribuiu a você a tarefa':n.kind=='all'?'mencionou @todos em':'mencionou você em';
  return `<h2 style="margin:0 0 4px">🔔 Menções</h2><p class="meta" style="margin:0 0 10px">Os lugares em que você foi mencionado(a) com @, as menções a @todos e as tarefas atribuídas a você. Clique para ir direto ao ponto.${un?` <button class="lnk" onclick="readAll()">Marcar todas como lidas</button>`:''}</p>
  <div class="card list">${L.length?L.map(n=>`<div class="row" onclick="openN('${sid(n.id)}')">${n.read?'<span style="width:9px;flex:none"></span>':'<span class="dot" title="Não lida"></span>'}${av(n.from)}<div style="min-width:0"><h3 style="font-weight:${n.read?400:700}">${e(N(n.from))}${roleT(n.from)} ${lab(n)} “${e(n.title)}”</h3>${n.text?`<div class="meta">${n.cid?'💬 ':''}${e(n.text)}</div>`:''}<div class="meta">${ago(n.ts)}</div></div></div>`).join(''):'<div class="empty">Nenhuma menção ainda.</div>'}</div>`;
 }
@@ -953,7 +978,7 @@ async function delMe(){
   const nb=db.collection('notes').doc(uid);
   await soft(async()=>{const fs=await nb.collection('files').get();
    for(const d of fs.docs)await delDocs((await d.ref.collection('chunks').get()).docs);
-   await delDocs(fs.docs);await delDocs((await nb.collection('items').get()).docs)});
+   await delDocs(fs.docs);await delDocs((await nb.collection('items').get()).docs);await delDocs((await nb.collection('cfg').get()).docs)});
   await soft(async()=>delDocs((await notifCol(uid).get()).docs));
   dying=true;unsubP&&unsubP();unsubA&&unsubA();unsubP=unsubA=null;stopData();
   const b=db.batch();['avatars','people','users'].forEach(c=>b.delete(db.collection(c).doc(uid)));b.delete(db.collection('allowed').doc(email));
@@ -1008,14 +1033,131 @@ async function unlink(lid){
  try{await db.collection('links').doc(lid).delete()}catch(x){saveFail(x)}
 }
 
-/* ---------- Bloco de anotações (espaço individual) ----------
-   Fica em notes/{uid}: as regras só deixam a própria pessoa ler e gravar. */
+/* ---------- Bloco de anotações (espaço individual, com criptografia de ponta a ponta) ----------
+   Tudo é cifrado NO APARELHO antes de ir para o servidor (AES-GCM 256). A chave do bloco é sorteada no
+   aparelho e guardada no servidor apenas "embrulhada" por outra chave, derivada da senha do bloco
+   (PBKDF2-SHA-256, 310 mil iterações). Sem a senha do bloco, ninguém lê: nem o administrador do portal,
+   nem quem administra o Firebase. Se a senha for esquecida, o conteúdo não pode ser recuperado. */
 const noteBase=()=>db.collection('notes').doc(S.user.uid);
+const enc8=x=>new TextEncoder().encode(x),dec8=b=>new TextDecoder().decode(b);
+const toB64=u=>{let r='';for(let i=0;i<u.length;i+=0x8000)r+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(r)};
+const fromB64=b=>{const r=atob(b||''),u=new Uint8Array(r.length);for(let i=0;i<r.length;i++)u[i]=r.charCodeAt(i);return u};
+const rnd=n=>crypto.getRandomValues(new Uint8Array(n));
+const ITER=310000;
+async function kek(pass,salt,iter){
+ const base=await crypto.subtle.importKey('raw',enc8(pass),'PBKDF2',false,['deriveKey']);
+ return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:iter,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+}
+const importK=raw=>crypto.subtle.importKey('raw',raw,'AES-GCM',false,['encrypt','decrypt']);
+async function aesEnc(key,bytes){const iv=rnd(12);return{iv:toB64(iv),ct:new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},key,bytes))}}
+async function aesDec(key,iv,ct){return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:fromB64(iv)},key,ct))}
+const cryptoOk=()=>!!(window.crypto&&crypto.subtle);
+/* conteúdo legível de uma anotação (decifrado, ou antigo ainda sem cifra) */
+const nd=n=>n.enc?S.ndec[n.id]:{title:n.title||'',text:n.text||'',files:Array.isArray(n.files)?n.files:[]};
+async function decAll(){
+ if(!NK)return;
+ for(const n of S.notes){
+  if(!n.enc)continue;const c=S.ndec[n.id];if(c&&c.upd===n.upd)continue;
+  try{const o=JSON.parse(dec8(await aesDec(NK,n.enc.iv,fromB64(n.enc.ct))));S.ndec[n.id]={upd:n.upd,title:String(o.title||''),text:String(o.text||''),files:Array.isArray(o.files)?o.files:[]}}
+  catch(x){S.ndec[n.id]={upd:n.upd,title:'(não foi possível decifrar)',text:'',files:[],bad:true}}
+ }
+}
+async function encNote(o){const c=await aesEnc(NK,enc8(JSON.stringify(o)));return{iv:c.iv,ct:toB64(c.ct)}}
+/* PDF cifrado: o arquivo inteiro é cifrado antes de ser dividido em pedaços */
+async function upNoteFile(f){
+ const c=await aesEnc(NK,new Uint8Array(await f.blob.arrayBuffer())),d=toB64(c.ct),n=Math.max(1,Math.ceil(d.length/CH)),ref=noteBase().collection('files').doc();
+ await ref.set({name:'cifrado',type:'application/octet-stream',size:c.ct.length,owner:S.user.uid,n,iv:c.iv,ts:TS()});
+ await Promise.all(Array.from({length:n},(_,k)=>ref.collection('chunks').doc(String(k)).set({d:d.slice(k*CH,(k+1)*CH)})));
+ return{id:ref.id,name:String(f.name).slice(0,200),size:f.size};
+}
+async function noteFileBytes(id){
+ const r=noteBase().collection('files').doc(id),m=(await r.get()).data()||{},sn=await r.collection('chunks').get();
+ let bytes=fromB64(sn.docs.slice().sort((a,b)=>+a.id-+b.id).map(x=>x.data().d||'').join(''));
+ if(m.iv){if(!NK)throw new Error('desbloqueie o bloco primeiro.');bytes=await aesDec(NK,m.iv,bytes)}
+ return{bytes,meta:m,docs:sn.docs,ref:r};
+}
+async function openNoteFile(id){
+ const w=window.open('','_blank');
+ try{w&&(w.document.title='Carregando…',w.document.body.textContent='Decifrando o PDF…')}catch(x){}
+ try{
+  let u=fcache['n'+id];
+  if(!u){const {bytes}=await noteFileBytes(id);u=fcache['n'+id]=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}))}
+  if(w)w.location.href=u;else{const a=document.createElement('a');a.href=u;a.download='anotacao.pdf';a.click()}
+ }catch(x){try{w&&w.close()}catch(y){}alert('Não foi possível abrir o PDF: '+((x&&x.message)||x))}
+}
+/* Anotações antigas (de antes da criptografia) são cifradas automaticamente assim que o bloco é desbloqueado */
+let migrating=false;
+async function migratePlain(){
+ if(!NK||migrating)return;const L=S.notes.filter(n=>!n.enc);if(!L.length)return;migrating=true;
+ try{
+  for(const n of L){
+   const files=[];
+   for(const f of (Array.isArray(n.files)?n.files:[])){
+    const id=sid(f&&f.id);if(!id)continue;
+    try{const x=await noteFileBytes(id);
+     if(x.meta.iv){files.push({id,name:f.name,size:f.size});continue}
+     const nf=await upNoteFile({name:f.name,blob:new Blob([x.bytes])});nf.size=f.size||x.bytes.length;files.push(nf);
+     await delDocs(x.docs);await x.ref.delete();
+    }catch(e2){}
+   }
+   await noteBase().collection('items').doc(n.id).set({enc:await encNote({title:n.title||'(sem título)',text:n.text||'',files}),ts:firebase.firestore.Timestamp.fromMillis(n.ts||Date.now()),upd:TS()});
+  }
+ }catch(x){}finally{migrating=false}
+}
+async function nbSetup(){
+ const p1=$('np1').value,p2=$('np2').value;showErr('');
+ if(!cryptoOk())return showErr('Este navegador não oferece criptografia. Use um navegador atualizado.');
+ if(p1.length<8)return showErr('A senha do bloco precisa ter ao menos 8 caracteres.');
+ if(p1!==p2)return showErr('As duas senhas não conferem.');
+ if(!$('nok').checked)return showErr('Marque que você entende que a senha do bloco não pode ser recuperada.');
+ showErr('Criando a chave e cifrando o bloco…',1);
+ try{
+  const salt=rnd(16),k=await kek(p1,salt,ITER),raw=rnd(32),w=await aesEnc(k,raw);
+  await noteBase().collection('cfg').doc('key').set({v:1,salt:toB64(salt),iter:ITER,wiv:w.iv,wct:toB64(w.ct),ts:TS()});
+  NKraw=raw;NK=await importK(raw);S.ncfg={salt:toB64(salt),iter:ITER,wiv:w.iv,wct:toB64(w.ct)};
+  await migratePlain();await decAll();render();
+ }catch(x){showErr('Não foi possível ativar a criptografia: '+msg(x))}
+}
+async function nbUnlock(){
+ const c=S.ncfg,pw=$('npw').value;if(!c||!pw)return;showErr('Desbloqueando…',1);
+ try{
+  const raw=await aesDec(await kek(pw,fromB64(c.salt),c.iter||ITER),c.wiv,fromB64(c.wct));
+  NKraw=raw;NK=await importK(raw);await decAll();render();migratePlain();
+ }catch(x){showErr('Senha do bloco incorreta.')}
+}
+function nbLock(){NK=NKraw=null;S.ndec={};S.ned=null;render()}
+function nbChange(){
+ $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card" style="max-width:420px"><h3 style="margin-top:0">Trocar a senha do bloco</h3>
+ <p class="meta" style="margin:0 0 6px">As anotações não precisam ser cifradas de novo: só a chave do bloco é protegida pela nova senha.</p>
+ <label class="meta">Nova senha do bloco (mín. 8 caracteres)</label><input id="nc1" class="f" type="password" autocomplete="new-password">
+ <label class="meta">Repita a nova senha</label><input id="nc2" class="f" type="password" autocomplete="new-password">
+ <div id="err" class="err"></div>
+ <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn" onclick="nbChangeSave()">Salvar nova senha</button></div></div></div>`;
+}
+async function nbChangeSave(){
+ const p1=$('nc1').value,p2=$('nc2').value;showErr('');
+ if(!NKraw)return showErr('Desbloqueie o bloco primeiro.');
+ if(p1.length<8)return showErr('A senha do bloco precisa ter ao menos 8 caracteres.');
+ if(p1!==p2)return showErr('As duas senhas não conferem.');
+ try{const salt=rnd(16),w=await aesEnc(await kek(p1,salt,ITER),NKraw);
+  await noteBase().collection('cfg').doc('key').set({v:1,salt:toB64(salt),iter:ITER,wiv:w.iv,wct:toB64(w.ct),ts:TS()});
+  closeM();alert('Senha do bloco alterada.');
+ }catch(x){showErr(msg(x))}
+}
+async function nbReset(){
+ if(prompt('Esqueceu a senha do bloco?\n\nSem ela, as anotações cifradas não podem ser recuperadas por ninguém. A única saída é APAGAR todo o bloco e começar de novo.\n\nPara apagar tudo, digite APAGAR:')!=='APAGAR')return;
+ try{const nb=noteBase(),fs=await nb.collection('files').get();
+  for(const d of fs.docs)await delDocs((await d.ref.collection('chunks').get()).docs);
+  await delDocs(fs.docs);await delDocs((await nb.collection('items').get()).docs);await delDocs((await nb.collection('cfg').get()).docs);
+  NK=NKraw=null;S.ndec={};S.ned=null;render();
+ }catch(x){saveFail(x)}
+}
 function noteOpen(id){
  if(S.ned&&id&&S.ned.id==id)return;
  if(S.ned&&S.ned.dirty&&!confirm('Descartar as alterações da anotação aberta?'))return;
- const n=id&&S.notes.find(x=>x.id==id);
- S.ned={id:n?n.id:'new',t:n?n.title||'':'',b:n?n.text||'':'',files:n&&Array.isArray(n.files)?n.files.slice():[],pend:[],rm:[],f:n?null:'xt',ss:null};
+ const n=id&&S.notes.find(x=>x.id==id),d=n&&nd(n);
+ if(n&&(!d||d.bad))return alert('Esta anotação não pôde ser decifrada.');
+ S.ned={id:n?n.id:'new',t:d?d.title:'',b:d?d.text:'',files:d?d.files.slice():[],pend:[],rm:[],f:n?null:'xt',ss:null};
  render();
 }
 function noteClose(){if(S.ned&&S.ned.dirty&&!confirm('Descartar as alterações?'))return;S.ned=null;render()}
@@ -1030,38 +1172,246 @@ async function notePick(inp){
 }
 function noteUnpick(k,i){const N0=S.ned;if(!N0)return;if(k=='f'){N0.rm.push(N0.files[i].id);N0.files.splice(i,1)}else N0.pend.splice(i,1);N0.dirty=1;render()}
 async function noteSave(){
- const N0=S.ned;if(!N0||S.busy)return;
+ const N0=S.ned;if(!N0||S.busy)return;if(!NK)return alert('O bloco está bloqueado.');
  N0.t=$('xt').value.trim().slice(0,200);N0.b=$('xb').value;
  if(!N0.t&&!N0.b.trim()&&!N0.files.length&&!N0.pend.length)return alert('A anotação está vazia.');
  if(N0.b.length>100000)return alert('Anotação muito longa (máx. 100 mil caracteres).');
  S.busy=true;render();
  try{
-  const up=await Promise.all(N0.pend.map(f=>upFile(f,'n')));
-  const files=[...N0.files,...up].map(f=>({id:f.id,name:f.name,size:f.size,type:'application/pdf'}));
-  const ref=N0.id=='new'?noteBase().collection('items').doc():noteBase().collection('items').doc(N0.id);
-  const data={title:N0.t||'(sem título)',text:N0.b,files,upd:TS()};if(N0.id=='new')data.ts=TS();
-  await ref.set(data,{merge:true});
+  const up=await Promise.all(N0.pend.map(upNoteFile));
+  const files=[...N0.files,...up].map(f=>({id:f.id,name:f.name,size:f.size}));
+  const old=N0.id!='new'&&S.notes.find(x=>x.id==N0.id);
+  const ref=old?noteBase().collection('items').doc(N0.id):noteBase().collection('items').doc();
+  await ref.set({enc:await encNote({title:N0.t||'(sem título)',text:N0.b,files}),ts:old?firebase.firestore.Timestamp.fromMillis(old.ts||Date.now()):TS(),upd:TS()});
   rmFiles(N0.rm.map(id=>({id})),'n');
   S.ned=null;
  }catch(x){saveFail(x)}
  finally{S.busy=false;render()}
 }
 async function noteDel(id){
- const n=S.notes.find(x=>x.id==id);if(!n||!confirm(`Excluir a anotação “${n.title||'(sem título)'}” e os PDFs dela?`))return;
- try{await noteBase().collection('items').doc(id).delete();rmFiles(n.files,'n');if(S.ned&&S.ned.id==id)S.ned=null;render()}catch(x){saveFail(x)}
+ const n=S.notes.find(x=>x.id==id),d=n&&nd(n);if(!n)return;
+ if(!confirm(`Excluir a anotação “${(d&&d.title)||'(sem título)'}” e os PDFs dela?`))return;
+ try{await noteBase().collection('items').doc(id).delete();rmFiles(d?d.files:[],'n');if(S.ned&&S.ned.id==id)S.ned=null;render()}catch(x){saveFail(x)}
 }
 function notebook(){
+ const head=`<h2 style="margin:0 0 4px">📓 Bloco de anotações</h2>
+ <div class="banner priv">🔒 <b>Espaço individual, com criptografia de ponta a ponta.</b> Suas anotações e PDFs são cifrados no seu aparelho com a senha do bloco antes de serem enviados. Ninguém mais consegue lê-los: nem a Diretoria, nem o administrador do portal, nem quem administra o servidor.</div>`;
+ if(!cryptoOk())return head+'<div class="card">Este navegador não oferece criptografia. Use um navegador atualizado (Chrome, Edge, Firefox ou Safari recentes).</div>';
+ if(S.ncfg===undefined)return head+'<div class="empty">Carregando…</div>';
+ if(S.ncfg===null){
+  const old=S.notes.length;
+  return head+`<div class="card auth" style="max-width:520px;margin:10px 0"><h3 style="margin:0 0 4px">Crie a senha do bloco</h3>
+  <p class="meta" style="margin:0 0 6px">É uma senha só para o bloco, diferente da senha de entrada no portal. Ela é pedida uma vez a cada vez que você abrir o portal.${old==1?' Sua anotação atual será cifrada agora.':old>1?` Suas ${old} anotações atuais serão cifradas agora.`:''}</p>
+  <label>Senha do bloco <span class="meta">(mín. 8 caracteres)</span></label><input id="np1" class="f" type="password" autocomplete="new-password">
+  <label>Repita a senha</label><input id="np2" class="f" type="password" autocomplete="new-password" onkeydown="if(event.key=='Enter')nbSetup()">
+  <label style="display:flex;gap:8px;align-items:flex-start;font-size:14px;margin:8px 0;color:var(--tx)"><input id="nok" type="checkbox" style="margin-top:4px;flex:none"> <span>Entendo que, se eu esquecer esta senha, <b>ninguém</b> conseguirá recuperar minhas anotações, nem o administrador.</span></label>
+  <div id="err" class="err"></div><button class="btn" style="width:100%" onclick="nbSetup()">Criar senha e proteger o bloco</button></div>`;
+ }
+ if(!NK)return head+`<div class="card auth" style="max-width:420px;margin:10px 0"><h3 style="margin:0 0 4px">Bloco trancado</h3>
+  <p class="meta" style="margin:0 0 6px">Digite a senha do bloco para ler e escrever suas anotações.</p>
+  <input id="npw" class="f" type="password" autocomplete="current-password" placeholder="Senha do bloco" onkeydown="if(event.key=='Enter')nbUnlock()">
+  <div id="err" class="err"></div><button class="btn" style="width:100%" onclick="nbUnlock()">Desbloquear</button>
+  <p style="text-align:center;margin:12px 0 0"><button class="lnk danger" onclick="nbReset()">Esqueci a senha do bloco</button></p></div>`;
  const N0=S.ned,L=S.notes;
  const ed=N0?`<div class="card"><input id="xt" class="f" maxlength="200" placeholder="Título da anotação" value="${e(N0.t)}" oninput="S.ned&&(S.ned.dirty=1)">
   <textarea id="xb" class="f" rows="12" placeholder="Escreva aqui. Só você vê." oninput="S.ned&&(S.ned.dirty=1)">${e(N0.b)}</textarea>
-  <div class="att">${N0.files.map((f,k)=>`<span class="chip"><span onclick="openFile('${sid(f.id)}','p','n')" title="Abrir">📄 ${e(f.name)}</span> <span class="meta">${fsz(+f.size||0)}</span><button type="button" class="lnk danger" title="Retirar PDF" onclick="noteUnpick('f',${k})">✕</button></span>`).join('')}${N0.pend.map((f,k)=>`<span class="chip">📄 ${e(f.name)} <span class="meta">${fsz(f.size)} · será enviado ao salvar</span><button type="button" class="lnk danger" title="Retirar PDF" onclick="noteUnpick('p',${k})">✕</button></span>`).join('')}</div>
+  <div class="att">${N0.files.map((f,k)=>`<span class="chip"><span onclick="openNoteFile('${sid(f.id)}')" title="Abrir">📄 ${e(f.name)}</span> <span class="meta">${fsz(+f.size||0)}</span><button type="button" class="lnk danger" title="Retirar PDF" onclick="noteUnpick('f',${k})">✕</button></span>`).join('')}${N0.pend.map((f,k)=>`<span class="chip">📄 ${e(f.name)} <span class="meta">${fsz(f.size)} · será cifrado e enviado ao salvar</span><button type="button" class="lnk danger" title="Retirar PDF" onclick="noteUnpick('p',${k})">✕</button></span>`).join('')}</div>
   <input id="xf" type="file" hidden multiple accept="application/pdf" onchange="notePick(this)">
-  <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" ${S.busy?'disabled':''} onclick="noteSave()">${S.busy?'Salvando…':'Salvar'}</button><button class="btn ghost" onclick="$('xf').click()">📎 Anexar PDF</button><button class="btn ghost" onclick="noteClose()">Cancelar</button>${N0.id!='new'?`<button class="btn ghost danger" onclick="noteDel('${sid(N0.id)}')">Excluir anotação</button>`:''}</div></div>`:'';
- return `<h2 style="margin:0 0 4px">📓 Bloco de anotações</h2>
- <div class="banner priv">🔒 <b>Espaço individual.</b> Só você vê as anotações e os PDFs guardados aqui. Ninguém mais da Diretoria tem acesso a eles pelo portal, nem o administrador.</div>
- ${N0?'':`<button class="btn" style="margin:4px 0 12px" onclick="noteOpen()">＋ Nova anotação</button>`}
+  <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" ${S.busy?'disabled':''} onclick="noteSave()">${S.busy?'Cifrando e salvando…':'Salvar'}</button><button class="btn ghost" onclick="$('xf').click()">📎 Anexar PDF</button><button class="btn ghost" onclick="noteClose()">Cancelar</button>${N0.id!='new'?`<button class="btn ghost danger" onclick="noteDel('${sid(N0.id)}')">Excluir anotação</button>`:''}</div></div>`:'';
+ return head+`<div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px">${N0?'':'<button class="btn" onclick="noteOpen()">＋ Nova anotação</button>'}<button class="btn ghost" onclick="nbLock()">Trancar o bloco</button><button class="btn ghost" onclick="nbChange()">Trocar a senha do bloco</button></div>
  ${ed}
- <div class="card list">${L.length?L.map(n=>`<div class="row ${N0&&N0.id==n.id?'on':''}" onclick="noteOpen('${sid(n.id)}')"><span style="font-size:22px">📝</span><div style="min-width:0;flex:1"><h3>${e(n.title||'(sem título)')}</h3>${n.text?`<div class="meta">${e(String(n.text).replace(/\s+/g,' ').slice(0,140))}</div>`:''}<div class="meta">atualizada ${ago(n.upd||n.ts)}${Array.isArray(n.files)&&n.files.length?` · 📎 ${n.files.length} PDF(s)`:''}</div></div></div>`).join(''):'<div class="empty">Nenhuma anotação ainda.</div>'}</div>`;
+ <div class="card list">${L.length?L.map(n=>{const d=nd(n)||{title:'Decifrando…',text:'',files:[]};return `<div class="row ${N0&&N0.id==n.id?'on':''}" onclick="noteOpen('${sid(n.id)}')"><span style="font-size:22px">📝</span><div style="min-width:0;flex:1"><h3>${e(d.title||'(sem título)')}</h3>${d.text?`<div class="meta">${e(String(d.text).replace(/\s+/g,' ').slice(0,140))}</div>`:''}<div class="meta">atualizada ${ago(n.upd||n.ts)}${d.files.length?` · 📎 ${d.files.length} PDF(s)`:''}${n.enc?'':' · cifrando…'}</div></div></div>`}).join(''):'<div class="empty">Nenhuma anotação ainda.</div>'}</div>`;
+}
+
+/* ---------- Sessões ao vivo: pauta, tempo, fila de fala, votação instantânea e ata ----------
+   sessions/{id}: dados da sessão (só a presidência da sessão e o admin alteram).
+   Subcoleções: presence (presenças), queue (pedidos de palavra) e ballots (votos da votação aberta). */
+const KEEP=['vq','vo','slim','pnew'];
+const SS=id=>S.sessions.find(x=>x.id==id);
+const sref=id=>db.collection('sessions').doc(id);
+const normS=d=>{const x=dat(d);x.ts=ms(x.ts);x.when=ms(x.when)||null;x.curAt=ms(x.curAt)||0;x.startedAt=ms(x.startedAt)||0;x.endedAt=ms(x.endedAt)||0;
+ if(x.speaker)x.speaker={...x.speaker,at:ms(x.speaker.at)||Date.now()};if(x.vote)x.vote={...x.vote,at:ms(x.vote.at)||Date.now()};
+ ['agenda','polls','log','attendees'].forEach(k=>{if(!Array.isArray(x[k]))x[k]=[]});if(typeof x.cur!='number')x.cur=-1;x.minutes=typeof x.minutes=='string'?x.minutes:'';return x};
+let swid=null,swun=[];
+function watchS(id){
+ if(id===swid)return;swun.forEach(f=>f());swun=[];swid=id;S.sp=[];S.sq=[];S.sb=[];S.min=null;if(!id)return;
+ const r=sref(id),L=(c,k,srt)=>swun.push(r.collection(c).onSnapshot(sn=>{if(swid!==id)return;S[k]=sn.docs.map(d=>{const x=dat(d);x.at=ms(x.at);x.ts=ms(x.ts);return x});if(srt)S[k].sort((a,b)=>a.at-b.at);render()},()=>{}));
+ L('presence','sp',1);L('queue','sq',1);L('ballots','sb');
+}
+const isChairS=x=>!!(x&&S.user&&(isAdmin()||x.chair.uid==S.user.uid||x.by.uid==S.user.uid));
+const SST={scheduled:'Convocada',live:'Ao vivo',closed:'Encerrada'};
+const mmss=sec=>{const a=Math.abs(sec),m=Math.floor(a/60),x=Math.floor(a%60);return m+':'+String(x).padStart(2,'0')};
+const tickTxt=end=>{const r=(end-Date.now())/1000;return r>=0?mmss(r)+' restantes':mmss(r)+' além do tempo'};
+const tick=end=>`<span class="tick ${end<Date.now()?'over':''}" data-end="${end}">${tickTxt(end)}</span>`;
+setInterval(()=>document.querySelectorAll('.tick').forEach(el=>{const end=+el.dataset.end;if(!end)return;el.textContent=tickTxt(end);el.classList.toggle('over',end<Date.now())}),1000);
+const slog=(x,txt)=>[...(x.log||[]),{at:Date.now(),txt:String(txt).slice(0,300)}].slice(-500);
+async function sUpd(id,upd){try{await sref(id).update(upd);return true}catch(x){saveFail(x);return false}}
+/* resultado: a opção mais votada; "Abstenção" não vence */
+function voteRes(opts,counts){
+ const valid=opts.map((o,i)=>fold(o).startsWith('absten')?-1:counts[i]),m=Math.max(0,...valid);
+ if(!m)return'sem votos válidos';
+ const w=opts.filter((o,i)=>valid[i]==m).map(o=>'“'+o+'”');
+ return w.length>1?`empate entre ${w.join(', ')} (${m} voto(s) cada)`:`${w[0]} (${m} voto(s))`;
+}
+async function voteFields(x){
+ const v=x.vote,bs=(await sref(x.id).collection('ballots').get()).docs.map(d=>d.data()).filter(b=>b.v==v.id);
+ const counts=v.opts.map((_,i)=>bs.filter(b=>b.opt===i).length);
+ return{id:v.id,q:v.q,point:typeof v.point=='number'?v.point:-1,at:v.at||Date.now(),closedAt:Date.now(),present:S.sp.length,res:voteRes(v.opts,counts),
+  items:v.opts.map((o,i)=>({o,n:counts[i],who:bs.filter(b=>b.opt===i).map(b=>String(b.name||''))}))};
+}
+/* ----- Convocar ----- */
+function sNew(){
+ const open=S.topics.filter(t=>!arch(t)).sort((a,b)=>(b.act||b.ts)-(a.act||a.ts));
+ $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card"><h3 style="margin-top:0">Convocar sessão</h3>
+ <input id="sn" class="f" maxlength="200" placeholder="Título (ex.: Reunião ordinária de novembro)">
+ <label class="meta">Data e hora (opcional)</label><input id="sw" class="f" type="datetime-local">
+ <label class="meta">Presidente da sessão (conduz a reunião)</label>
+ <select id="sc" class="f">${dir().map(([i,n])=>`<option value="${e(i)}" ${i==S.user.uid?'selected':''}>${e(n)}${R({uid:i})?' · '+e(R({uid:i})):''}</option>`).join('')}</select>
+ <div style="display:flex;gap:10px;flex-wrap:wrap"><div style="flex:1;min-width:150px"><label class="meta">Quórum mínimo (opcional)</label><input id="sqm" class="f" type="number" min="0" max="200" placeholder="ex.: 5"></div>
+ <div style="flex:1;min-width:150px"><label class="meta">Tempo por ponto (min)</label><input id="sd" class="f" type="number" min="1" max="240" value="10"></div></div>
+ <label class="meta">Pauta: um ponto por linha</label><textarea id="sa" class="f" rows="4" placeholder="Aprovação da ata anterior&#10;Prestação de contas&#10;Assuntos gerais"></textarea>
+ ${open.length?`<label class="meta">Incluir itens do portal na pauta (opcional)</label><div class="pick">${open.slice(0,60).map(t=>`<label><input type="checkbox" name="si" value="${e(t.id)}"> ${e(t.title)} <span class="meta">· ${e((TYPES[t.type]||'').replace(/^\S+\s/,''))}</span></label>`).join('')}</div>`:''}
+ <p class="meta">Todos serão avisados da convocação. Pontos podem ser incluídos durante a sessão.</p>
+ <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn" id="pbtn" onclick="sCreate()">Convocar</button></div></div></div>`;
+}
+async function sCreate(){
+ const title=$('sn').value.trim(),dur=Math.max(1,Math.min(240,+$('sd').value||10)),cu=$('sc').value,q=Math.max(0,Math.min(200,parseInt($('sqm').value)||0));
+ if(!title)return alert('Informe o título da sessão.');if(!S.people[cu])return alert('Escolha quem preside a sessão.');
+ const ag=$('sa').value.split('\n').map(x=>x.trim()).filter(Boolean).map(t=>({t:t.slice(0,200),tid:null,dur,done:false}));
+ [...document.querySelectorAll('input[name="si"]:checked')].forEach(x=>{const t=T(x.value);if(t)ag.push({t:t.title.slice(0,200),tid:t.id,dur,done:false})});
+ if(ag.length>50)return alert('No máximo 50 pontos de pauta.');
+ const wv=$('sw').value,when=wv?firebase.firestore.Timestamp.fromMillis(new Date(wv).getTime()):null;
+ const r=db.collection('sessions').doc(),b=db.batch();
+ b.set(r,{title,when,chair:{uid:cu,name:S.people[cu].name},by:who(),status:'scheduled',agenda:ag,cur:-1,curAt:null,curDur:0,speaker:null,vote:null,polls:[],log:[],minutes:'',quorum:q,attendees:[],ts:TS(),startedAt:null,endedAt:null});
+ notify(b,{tid:r.id,cid:null,title,text:wv?'Sessão convocada para '+fmt(new Date(wv).getTime()):'Sessão convocada'},{all:true,uids:[]},Object.fromEntries(Object.keys(S.people).map(u=>[u,'session'])));
+ try{await b.commit();closeM();go('s/'+r.id)}catch(x){saveFail(x)}
+}
+async function sDel(id){
+ const x=SS(id);if(!x||!confirm('Excluir esta sessão convocada? Todos perdem o acesso a ela.'))return;
+ try{for(const c of ['presence','queue','ballots'])await delDocs((await sref(id).collection(c).get()).docs);await sref(id).delete();S.view='sessoes';go('')}catch(e2){saveFail(e2)}
+}
+/* ----- Condução (presidente da sessão) ----- */
+async function sOpen(id){
+ const x=SS(id);if(!x||!confirm('Abrir a sessão agora? Todos serão avisados.'))return;
+ const b=db.batch();b.update(sref(id),{status:'live',startedAt:TS(),log:slog(x,`Sessão aberta por ${S.user.name}`)});
+ notify(b,{tid:id,cid:null,title:x.title,text:'A sessão foi aberta agora. Entre e marque presença.'},{all:false,uids:[]},Object.fromEntries(Object.keys(S.people).map(u=>[u,'live'])));
+ try{await b.commit()}catch(e2){saveFail(e2)}
+}
+function sPoint(id,i){
+ const x=SS(id);if(!x||!x.agenda[i])return;
+ const ag=x.agenda.map((p,k)=>k===x.cur&&k!==i?{...p,done:true}:k===i?{...p,done:false}:p);
+ sUpd(id,{agenda:ag,cur:i,curAt:TS(),curDur:+(ag[i].dur||10),log:slog(x,`Ponto ${i+1} em discussão: ${ag[i].t}`)});
+}
+function sNext(id){const x=SS(id),i=x.agenda.findIndex((p,k)=>!p.done&&k!==x.cur);if(i<0)return alert('Não há mais pontos pendentes.');sPoint(id,i)}
+function sDone(id){const x=SS(id);if(!x||x.cur<0)return;sUpd(id,{agenda:x.agenda.map((p,k)=>k===x.cur?{...p,done:true}:p),cur:-1,curAt:null,log:slog(x,`Ponto ${x.cur+1} concluído: ${x.agenda[x.cur].t}`)})}
+function sExt(id,mi){const x=SS(id);if(!x||x.cur<0)return;sUpd(id,{curDur:(x.curDur||10)+mi,log:slog(x,`Tempo do ponto ${x.cur+1} prorrogado em ${mi} min`)})}
+function sAddPoint(id){
+ const x=SS(id),v=(($('pnew')||{}).value||'').trim();if(!x||!v)return;if(x.agenda.length>=50)return alert('No máximo 50 pontos de pauta.');
+ S.kv.pnew='';sUpd(id,{agenda:[...x.agenda,{t:v.slice(0,200),tid:null,dur:10,done:false}],log:slog(x,`Ponto incluído na pauta: ${v.slice(0,200)}`)});
+}
+function sGrant(id,uid){
+ const x=SS(id),q=S.sq.find(y=>y.id==uid);if(!x||!q)return;
+ const lim=Math.max(1,Math.min(30,parseInt((($('slim')||{}).value))||3)),b=db.batch();
+ b.delete(sref(id).collection('queue').doc(uid));
+ b.update(sref(id),{speaker:{uid,name:q.name,at:TS(),lim:lim*60},log:slog(x,`${q.name} recebeu a palavra (${lim} min)`)});
+ b.commit().catch(saveFail);
+}
+function sDrop(id,uid){sref(id).collection('queue').doc(uid).delete().catch(saveFail)}
+function sEndSpeech(id){const x=SS(id);if(!x||!x.speaker)return;sUpd(id,{speaker:null,log:slog(x,`${x.speaker.name} concluiu a fala`)})}
+function sSpkExt(id){const x=SS(id);if(!x||!x.speaker)return;sUpd(id,{speaker:{...x.speaker,at:firebase.firestore.Timestamp.fromMillis(x.speaker.at),lim:x.speaker.lim+60}})}
+function sVoteOpen(id){
+ const x=SS(id);if(!x)return;
+ const q=(($('vq')||{}).value||'').trim()||(x.cur>=0?x.agenda[x.cur].t:''),opts=((($('vo')||{}).value||'').trim()||'Sim; Não; Abstenção').split(/;|\n/).map(o=>o.trim()).filter(Boolean);
+ if(!q)return alert('Escreva a pergunta da votação.');
+ if(opts.length<2||opts.length>10)return alert('Use de 2 a 10 opções, separadas por ponto e vírgula.');
+ delete S.kv.vq;delete S.kv.vo;
+ sUpd(id,{vote:{id:'v'+Date.now().toString(36),q:q.slice(0,300),opts:opts.map(o=>o.slice(0,100)),open:true,at:TS(),point:x.cur},log:slog(x,`Votação aberta: ${q.slice(0,200)}`)});
+}
+async function sVoteClose(id){
+ const x=SS(id);if(!x||!x.vote)return;
+ try{const pl=await voteFields(x);await sref(id).update({vote:null,polls:[...x.polls,pl],log:slog(x,`Votação encerrada: “${pl.q.slice(0,150)}”. Resultado: ${pl.res}`)})}catch(e2){saveFail(e2)}
+}
+async function sClose(id){
+ const x=SS(id);if(!x||!confirm('Encerrar a sessão? Depois disso, a sessão e a ata não podem mais ser alteradas.'))return;
+ try{
+  let polls=x.polls,log=x.log;
+  if(x.vote){const pl=await voteFields(x);polls=[...polls,pl];log=slog({log},`Votação encerrada: “${pl.q.slice(0,150)}”. Resultado: ${pl.res}`)}
+  if(S.min&&S.min.sid==id)S.min.dirty=false;
+  const minutes=(S.min&&S.min.sid==id?S.min.v:x.minutes).slice(0,50000);
+  await sref(id).update({status:'closed',endedAt:TS(),speaker:null,vote:null,polls,minutes,cur:-1,curAt:null,
+   agenda:x.agenda.map((p,k)=>k===x.cur?{...p,done:true}:p),attendees:S.sp.map(p=>({uid:p.id,name:String(p.name||''),at:p.at||0})),
+   log:slog({log},`Sessão encerrada por ${S.user.name} (${S.sp.length} presente(s))`)});
+ }catch(e2){saveFail(e2)}
+}
+/* ----- Ata redigida ao vivo (salva sozinha) ----- */
+let minT=null;
+function minInput(id,el){S.min={sid:id,v:el.value,dirty:true};const st=$('mst');if(st)st.textContent='salvando…';clearTimeout(minT);minT=setTimeout(()=>minSave(id),1200)}
+async function minSave(id){
+ const m=S.min;if(!m||m.sid!=id)return;const v=m.v;
+ try{await sref(id).update({minutes:v.slice(0,50000)});if(S.min&&S.min.v===v)S.min.dirty=false;const st=$('mst');if(st)st.textContent='salvo'}
+ catch(x){const st=$('mst');if(st)st.textContent='não foi possível salvar'}
+}
+/* ----- Participação ----- */
+async function sPresence(id,on){
+ const r=sref(id).collection('presence').doc(S.user.uid);
+ try{if(on)await r.set({name:S.user.name,at:TS()});else{await sref(id).collection('queue').doc(S.user.uid).delete().catch(()=>{});await r.delete()}}catch(x){saveFail(x)}
+}
+async function sAsk(id,on){const r=sref(id).collection('queue').doc(S.user.uid);try{on?await r.set({name:S.user.name,at:TS()}):await r.delete()}catch(x){saveFail(x)}}
+async function sBallot(id,i){
+ const x=SS(id),v=x&&x.vote;if(!v||!v.open)return;
+ try{await sref(id).collection('ballots').doc(v.id+'_'+S.user.uid).set({v:v.id,uid:S.user.uid,name:S.user.name,opt:i,ts:TS()})}catch(e2){saveFail(e2)}
+}
+/* ----- Telas ----- */
+function sessionsList(){
+ const o={live:0,scheduled:1,closed:2},L=S.sessions.slice().sort((a,b)=>o[a.status]-o[b.status]||(a.status=='closed'?(b.endedAt||b.ts)-(a.endedAt||a.ts):(a.when||a.ts)-(b.when||b.ts)));
+ return `<h2 style="margin:0 0 4px">🎙 Sessões</h2><p class="meta" style="margin:0 0 10px">Reuniões da Diretoria em tempo real: pauta com tempo por ponto, fila de fala, votação instantânea e ata redigida ao vivo.</p>
+ <button class="btn" style="margin-bottom:12px" onclick="sNew()">＋ Convocar sessão</button>
+ <div class="card list">${L.length?L.map(x=>`<div class="row" onclick="go('s/${sid(x.id)}')"><div style="min-width:0;flex:1"><h3>${e(x.title)} <span class="sbadge ${x.status}">${SST[x.status]||''}</span></h3>
+ <div class="meta">${x.status=='closed'?'encerrada em '+fmt(x.endedAt||x.ts):x.when?'marcada para '+fmt(x.when):'sem data marcada'} · presidente: ${e(N(x.chair))}${roleT(x.chair)} · ${x.agenda.length} ponto(s)${x.status=='closed'?` · ${x.attendees.length} presente(s)`:''}</div></div></div>`).join(''):'<div class="empty">Nenhuma sessão ainda.</div>'}</div>`;
+}
+function sessionView(x){
+ const me=S.user.uid,ch=isChairS(x),live=x.status=='live',closed=x.status=='closed',i0=sid(x.id);
+ const pres=closed?x.attendees.map(a=>({id:a.uid,name:a.name,at:a.at})):S.sp,amP=S.sp.some(p=>p.id==me),q=S.sq,qi=q.findIndex(y=>y.id==me);
+ const tot=Object.keys(S.people).length,need=x.quorum||0,okQ=!need||pres.length>=need;
+ const cp=x.cur>=0&&x.agenda[x.cur],cpEnd=cp?x.curAt+(x.curDur||cp.dur||10)*60000:0,sp=x.speaker,v=x.vote;
+ const myB=v&&S.sb.find(b=>b.v==v.id&&b.uid==me),nB=v?S.sb.filter(b=>b.v==v.id).length:0;
+ const head=`<button class="btn ghost sm" onclick="S.view='sessoes';go('')">← Sessões</button>
+ <div class="card" style="margin-top:12px"><h2 style="margin:0 0 4px">${e(x.title)} <span class="sbadge ${x.status}">${SST[x.status]||''}</span></h2>
+ <div class="meta">Presidente da sessão: <b>${e(N(x.chair))}</b>${roleT(x.chair)} · convocada por ${e(N(x.by))}${x.when?' · marcada para '+fmt(x.when):''}${x.startedAt?' · aberta em '+fmt(x.startedAt):''}${x.endedAt?' · encerrada em '+fmt(x.endedAt):''}</div>
+ <div class="meta" style="margin-top:4px">Presentes: <b>${pres.length}</b> de ${tot}${need?` · quórum mínimo ${need}: <b class="${okQ?'ok':'bad'}">${okQ?'atingido':'não atingido'}</b>`:''}</div>
+ ${!closed&&!live&&ch?`<div class="ctl" style="margin-top:10px"><button class="btn" onclick="sOpen('${i0}')">Abrir a sessão</button><button class="btn ghost danger" onclick="sDel('${i0}')">Excluir convocação</button></div>`:''}
+ ${!closed&&!live&&!ch?'<p class="meta" style="margin:8px 0 0">A sessão ainda não foi aberta. Você será avisado quando começar.</p>':''}
+ ${live?`<div class="ctl" style="margin-top:10px">${amP?`<span class="ok"><b>Você está presente.</b></span><button class="btn ghost sm" onclick="sPresence('${i0}',false)">Sair da sessão</button>`:`<button class="btn" onclick="sPresence('${i0}',true)">Marcar presença</button>`}</div>`:''}</div>`;
+ /* painel do presidente */
+ const panel=live&&ch?`<div class="card chair"><h3>Painel do presidente</h3>
+ <div class="kpi"><div>Quórum<b class="${okQ?'ok':'bad'}">${pres.length}${need?' / '+need:''}</b><span class="meta">${need?(okQ?'atingido':'não atingido'):'sem mínimo definido'}</span></div>
+ <div>Pontos<b>${x.agenda.filter(p=>p.done).length} / ${x.agenda.length}</b><span class="meta">${x.agenda.filter((p,k)=>!p.done&&k!==x.cur).length} pendente(s)</span></div>
+ <div>Votação<b>${v?nB+' voto(s)':'—'}</b><span class="meta">${v?'aberta':'nenhuma aberta'}</span></div>
+ <div>Fila de fala<b>${q.length}</b><span class="meta">pedido(s)</span></div></div>
+ <b>Pauta</b><div class="ctl">${cp?`<button class="btn sm" onclick="sDone('${i0}')">Concluir ponto ${x.cur+1}</button><button class="btn ghost sm" onclick="sExt('${i0}',5)">+5 min</button>`:''}<button class="btn ghost sm" onclick="sNext('${i0}')">${cp?'Próximo ponto':'Iniciar próximo ponto'}</button></div>
+ <div class="ctl"><input id="pnew" class="f" maxlength="200" placeholder="Incluir ponto na pauta" onkeydown="if(event.key=='Enter')sAddPoint('${i0}')"><button class="btn ghost sm" onclick="sAddPoint('${i0}')">Incluir</button></div>
+ <div class="sec"><b>Fila de fala</b> <span class="meta">· tempo de fala:</span> <input id="slim" class="f" type="number" min="1" max="30" value="3" style="width:64px;display:inline-block;margin:0"> <span class="meta">min</span>
+ ${sp?`<div class="ctl">Com a palavra: <b>${e(N(sp))}</b>${roleT(sp)} · ${tick(sp.at+sp.lim*1000)}<button class="btn ghost sm" onclick="sSpkExt('${i0}')">+1 min</button><button class="btn sm" onclick="sEndSpeech('${i0}')">Encerrar fala</button></div>`:''}
+ ${q.length?q.map((y,k)=>`<div class="ctl"><span class="meta">${k+1}º</span> <b>${e(N(y))}</b>${roleT(y)} <span class="meta">pediu às ${new Date(y.at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span><button class="btn sm" onclick="sGrant('${i0}','${sid(y.id)}')">Conceder a palavra</button><button class="btn ghost sm" onclick="sDrop('${i0}','${sid(y.id)}')">Retirar</button></div>`).join(''):'<p class="meta" style="margin:6px 0">Ninguém pediu a palavra.</p>'}</div>
+ <div class="sec"><b>Votação instantânea</b>${v?`<div class="ctl">“${e(v.q)}” · <b>${nB}</b> de ${S.sp.length} presente(s) já votaram<button class="btn sm" onclick="sVoteClose('${i0}')">Encerrar votação</button></div>
+ <div class="meta">${v.opts.map((o,k)=>`${e(o)}: ${S.sb.filter(b=>b.v==v.id&&b.opt===k).length}`).join(' · ')}</div>`
+ :`<div class="ctl"><input id="vq" class="f" maxlength="300" placeholder="Pergunta${cp?' (vazio = '+e(cp.t)+')':''}"></div><div class="ctl"><input id="vo" class="f" maxlength="600" placeholder="Opções separadas por ; (vazio = Sim; Não; Abstenção)"><button class="btn sm" onclick="sVoteOpen('${i0}')">Abrir votação</button></div>`}</div>
+ <div class="sec ctl"><button class="btn ghost danger" onclick="sClose('${i0}')">Encerrar a sessão</button></div></div>`:'';
+ /* o que todos veem */
+ const now=live?`<div class="card"><b>Agora</b>
+ <div style="margin:8px 0">${cp?`Ponto ${x.cur+1} em discussão: <b>${e(cp.t)}</b>${cp.tid&&T(cp.tid)?` <button class="lnk" onclick="go('t/${sid(cp.tid)}')">abrir item</button>`:''} · ${tick(cpEnd)}`:'<span class="meta">Nenhum ponto em discussão no momento.</span>'}</div>
+ <div style="margin:8px 0">${sp?`Com a palavra: <b>${e(N(sp))}</b>${roleT(sp)} · ${tick(sp.at+sp.lim*1000)}`:'<span class="meta">Ninguém com a palavra.</span>'}</div>
+ <div class="ctl">${amP?(qi>=0?`<span>Você é o ${qi+1}º na fila de fala.</span><button class="btn ghost sm" onclick="sAsk('${i0}',false)">Retirar pedido</button>`:(sp&&sp.uid==me?'<b class="ok">Você está com a palavra.</b>':`<button class="btn ghost" onclick="sAsk('${i0}',true)">Pedir a palavra</button>`)):'<span class="meta">Marque presença para pedir a palavra e votar.</span>'}</div>
+ ${v?`<div class="sec"><b>Votação aberta:</b> ${e(v.q)}<div class="ctl">${v.opts.map((o,k)=>`<button class="btn sm ${myB&&myB.opt===k?'':'ghost'}" ${amP?`onclick="sBallot('${i0}',${k})"`:'disabled'}>${e(o)}</button>`).join('')}</div>
+ <div class="meta">${myB?`Seu voto: <b>${e(v.opts[myB.opt]||'')}</b> (você pode mudar até a votação ser encerrada).`:amP?'Você ainda não votou.':'Só quem marcou presença vota.'} ${nB} voto(s) registrado(s). O resultado aparece quando a votação for encerrada.</div></div>`:''}</div>`:'';
+ const agenda=`<div class="card"><b>Pauta (${x.agenda.length})</b>${x.agenda.length?x.agenda.map((p,k)=>`<div class="pt ${k===x.cur?'cur':p.done?'done':''}"><span class="n">${k+1}</span><div style="flex:1;min-width:0">${e(p.t)}${p.tid&&T(p.tid)?` <button class="lnk" onclick="go('t/${sid(p.tid)}')">abrir item</button>`:''}<div class="meta">${k===x.cur?'em discussão':p.done?'concluído':'pendente'} · ${p.dur||10} min</div></div>${live&&ch&&k!==x.cur?`<button class="btn ghost sm" onclick="sPoint('${i0}',${k})">${p.done?'Retomar':'Iniciar'}</button>`:''}</div>`).join(''):'<p class="meta">Sem pontos de pauta.</p>'}</div>`;
+ const polls=x.polls.length?`<div class="card"><b>Votações realizadas (${x.polls.length})</b>${x.polls.map(pl=>`<div class="sec" style="margin-top:8px"><b>${e(pl.q)}</b><div>Resultado: <b>${e(pl.res)}</b></div>${(pl.items||[]).map(it=>`<div class="meta">${e(it.o)}: ${it.n}${it.who&&it.who.length?' · '+it.who.map(w=>e(w)).join(', '):''}</div>`).join('')}<div class="meta">${pl.present||0} presente(s) na votação · encerrada às ${new Date(pl.closedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div></div>`).join('')}</div>`:'';
+ const minV=S.min&&S.min.sid==x.id&&S.min.dirty?S.min.v:x.minutes;
+ const ata=`<div class="card"><b>Ata</b> ${ch&&!closed?'<span class="meta">· redigida ao vivo; salva sozinha (<span id="mst">salvo</span>)</span>':''}
+ ${ch&&!closed?`<textarea id="sm" class="f" rows="10" maxlength="50000" placeholder="Redija aqui a ata. Os participantes acompanham em tempo real." oninput="minInput('${i0}',this)">${e(minV)}</textarea>`:(x.minutes?`<div class="ata body">${e(x.minutes)}</div>`:'<p class="meta">Nada redigido ainda.</p>')}
+ <details style="margin-top:8px"${closed?' open':''}><summary class="meta">Registro automático (${x.log.length})</summary>${x.log.map(l=>`<div class="h">${e(l.txt)} <span class="meta">· ${new Date(l.at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span></div>`).join('')||'<p class="meta">Sem registros.</p>'}</details></div>`;
+ const people=`<div class="card"><b>${closed?'Presentes na sessão':'Presentes agora'} (${pres.length})</b><div class="voters" style="margin:8px 0 0">${pres.map(p=>`<span class="who">${av({uid:p.id,name:p.name},'sm')} ${e(N({uid:p.id,name:p.name}))}${roleT({uid:p.id})}</span>`).join('')||'<span class="meta">Ninguém.</span>'}</div></div>`;
+ return head+panel+now+agenda+polls+ata+people;
 }
 render();
 </script>
