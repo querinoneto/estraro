@@ -515,7 +515,7 @@ function setSt(id,st){
 function myTasks(){
  const me=S.user.uid,L=S.topics.filter(t=>isRem(t)&&isAsg(t,me)),byDue=(a,b)=>(a.due||'')>(b.due||'')?1:-1;
  const row=t=>`<div class="row" onclick="go('t/${sid(t.id)}')">${av(t.author)}<div style="min-width:0"><h3>${e(t.title)}</h3>
-  <div class="meta">${stTag(t)}${t.due?` · prazo <span class="${!arch(t)&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''} · criada por ${e(N(t.author))}${asg(t).length>1?' · 👥 com '+names(asg(t).filter(a=>a.uid!=me),1):''}</div></div></div>`;
+  <div class="meta">${stTag(t)}${t.due?` · prazo <span class="${!arch(t)&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''} · criada por ${e(N(t.author))}${asg(t).length>1?' · com '+names(asg(t).filter(a=>a.uid!=me),1):''}</div></div></div>`;
  const sec=(title,A,empty)=>`<h3 style="margin:18px 0 8px">${title} <span class="meta">(${A.length})</span></h3><div class="card list">${A.length?A.map(row).join(''):`<div class="empty" style="padding:18px">${empty}</div>`}</div>`;
  const fe=L.filter(t=>arch(t)).sort((a,b)=>fin(b).at-fin(a).at).slice(0,15);
  return `<h2 style="margin:0 0 4px">📋 Minhas tarefas</h2><p class="meta" style="margin:0">Tarefas em que você é responsável. Abra uma tarefa para atualizar o status.</p>
@@ -529,7 +529,7 @@ function side(){
  const rem=S.topics.filter(t=>isRem(t)&&!arch(t)&&t.due).sort((a,b)=>a.due>b.due?1:-1).slice(0,4),un=unread();
  return `<button class="btn newbtn" style="width:100%;margin-bottom:14px" onclick="compose()">＋ Novo</button>
  <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}<button class="cat ${S.view=='minhas'?'on':''}" onclick="S.view='minhas';go('')">📋 Minhas tarefas${myOpen()?`<span class="tag">${myOpen()}</span>`:''}</button><button class="cat ${S.view=='mencoes'?'on':''}" onclick="S.view='mencoes';go('')">🔔 Menções${un?`<span class="tag">${un} nova(s)</span>`:''}</button><button class="cat ${S.view=='bloco'?'on':''}" onclick="S.view='bloco';go('')">📓 Bloco de anotações<span class="meta">🔒</span></button>${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pendU().length?`<span class="tag">${pendU().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
- <div class="box rem-box"><h4>📋 Próximos prazos</h4>${rem.length?rem.map(r=>`<div style="margin:6px 0;cursor:pointer" onclick="go('t/${sid(r.id)}')"><b>${e(r.title)}</b><div class="meta ${r.due<today()?'due':''}">${r.due<today()?'Vencida · ':''}${fd(r.due)}${asg(r).length?' · '+names(asg(r),1):''} · ${STL[stOf(r)]}</div></div>`).join(''):'<span class="meta">Nenhuma tarefa pendente 🎉</span>'}</div>`;
+ <div class="box rem-box"><h4>Próximos prazos</h4>${rem.length?rem.map(r=>`<div style="margin:6px 0;cursor:pointer" onclick="go('t/${sid(r.id)}')"><b>${e(r.title)}</b><div class="meta ${r.due<today()?'due':''}">${r.due<today()?'Vencida · ':''}${fd(r.due)}${asg(r).length?' · '+names(asg(r),1):''} · ${STL[stOf(r)]}</div></div>`).join(''):'<span class="meta">Nenhuma tarefa pendente 🎉</span>'}</div>`;
 }
 function list(){
  const q=S.q.toLowerCase(),v=S.view,sd=seen();
@@ -541,7 +541,7 @@ function list(){
  </div>
  <div class="card list">${L.length?L.map(t=>{const un=(t.act||t.ts)>(sd[t.id]||0)&&t.author.uid!=S.user.uid||(t.act||t.ts)>(sd[t.id]||0)&&sd[t.id],f=fin(t),nf=Array.isArray(t.files)?t.files.length:0;
  return `<div class="row" onclick="go('t/${sid(t.id)}')">${un?'<span class="dot" title="Novidades"></span>':'<span style="width:9px"></span>'}${av(t.author)}<div><h3>${e(t.title)}${t.pinned?' <span class="tag">Fixado</span>':''}</h3>
- <div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))}${roleT(t.author)} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${isRem(t)?' · '+STL[stOf(t)]:''}${asg(t).length?' · 👥 '+names(asg(t)):''}${!f&&t.ends?` · ⏳ até ${fmt(t.ends)}`:''}${nf?` · 📎 ${nf}`:''}${linksOf(t.id).length?` · 🔗 ${linksOf(t.id).length}`:''}${f?` · 📦 ${f.auto?'prazo encerrado':e(N(f.by))}, ${fmt(f.at)}`:''}</div></div>
+ <div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))}${roleT(t.author)} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${isRem(t)?' · '+STL[stOf(t)]:''}${asg(t).length?' · responsáveis: '+names(asg(t)):''}${!f&&t.ends?` · até ${fmt(t.ends)}`:''}${nf?` · 📎 ${nf}`:''}${linksOf(t.id).length?` · 🔗 ${linksOf(t.id).length}`:''}${f?` · 📦 ${f.auto?'prazo encerrado':e(N(f.by))}, ${fmt(f.at)}`:''}</div></div>
  <div class="stats">${t.type=='poll'?'':`💬 ${cmts(t).length}`}</div></div>`}).join(''):'<div class="empty">Nada por aqui ainda.</div>'}</div>`;
 }
 /* ---------- Anexos (PDF e imagens) ----------
@@ -699,14 +699,14 @@ function detail(t){
   const opts=t.options||[],vs=S.votes,
    nm=i=>[...legV(opts[i]).map(x=>{const a=String(x).split('|');return{uid:a[0],name:a.slice(1).join('|')}}),...vs.filter(v=>vopts(v).includes(i)).map(v=>({uid:v.id,name:v.name}))],
    part=vs.length+opts.reduce((s,o)=>s+legV(o).length,0),my=vs.find(v=>v.id==u.uid),mine=my?vopts(my):[];
-  extra=`<p class="meta" style="margin:0 0 4px">${t.multi?'☑ Múltipla escolha: marque quantas opções quiser.':'◉ Escolha única: marque uma opção.'}${!off?' Clique de novo para desmarcar.':''}${!off&&t.ends?` ⏳ Encerra automaticamente em <b>${fmt(t.ends)}</b>.`:''}</p>`
+  extra=`<p class="meta" style="margin:0 0 4px">${t.multi?'☑ Múltipla escolha: marque quantas opções quiser.':'◉ Escolha única: marque uma opção.'}${!off?' Clique de novo para desmarcar.':''}${!off&&t.ends?` Encerra automaticamente em <b>${fmt(t.ends)}</b>.`:''}</p>`
    +opts.map((o,i)=>{const n=nm(i).length,me=mine.includes(i)||legV(o).some(x=>String(x).startsWith(u.uid+'|'));
     return `<button class="opt ${me?'me':''}" ${off?'disabled':''} onclick="vote('${i0}',${i})"><i style="width:${part?n/part*100:0}%"></i><span>${t.multi?(me?'☑ ':'☐ '):''}${e(o.t)}<b>${n} voto(s)</b></span></button>
     ${n?`<div class="voters">${nm(i).map(v=>`<span class="who">${av(v,'sm')} ${e(N(v))}${roleT(v)}</span>`).join('')}</div>`:''}`}).join('')
    +`<div class="meta">${part} participante(s) · votação aberta: todos veem quem votou em cada opção.</div>`}
  if(isRem(t)){const A=asg(t),st=stOf(t);
-  extra=`<p style="margin:6px 0">📅 Prazo: <b class="${!off&&t.due<today()?'due':''}">${fd(t.due)}</b></p>
-  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0">👥 Responsáveis: ${A.length?A.map(a=>`<span class="who">${av(a,'sm')} ${e(N(a))}${roleT(a)}</span>`).join(''):'<span class="meta">ninguém (o autor acompanha)</span>'}</div>
+  extra=`<p style="margin:6px 0">Prazo: <b class="${!off&&t.due<today()?'due':''}">${fd(t.due)}</b></p>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0">Responsáveis: ${A.length?A.map(a=>`<span class="who">${av(a,'sm')} ${e(N(a))}${roleT(a)}</span>`).join(''):'<span class="meta">ninguém (o autor acompanha)</span>'}</div>
   <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 4px"><b>Status:</b> ${canSt(t)?['todo','doing','done'].map(k=>`<button class="btn sm ${st==k?'':'ghost'}" onclick="setSt('${i0}','${k}')">${STL[k]}</button>`).join(''):stTag(t)}</div>
   ${!off&&!canSt(t)?`<p class="meta" style="margin:0">Só ${A.length?'os responsáveis atualizam':'o autor atualiza'} o status desta tarefa.</p>`:''}`}
  const note=f?(f.note||(t.type=='poll'&&f.auto?pollResult(t,S.votes):'')):'';
