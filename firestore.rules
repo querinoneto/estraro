@@ -161,63 +161,51 @@ service cloud.firestore {
         || (approved() && resource.data.kind == 'rel' && resource.data.by.uid == request.auth.uid);
     }
 
-    // ---------- Sessões ao vivo ----------
-    // A sessão só é alterada pela presidência da sessão, por quem a convocou ou pelo admin.
-    // Presença e pedido de palavra: cada um marca o seu. Voto: só quem está presente, na votação aberta.
+    // ---------- Sessões ----------
+    // Criar já abre a sessão; quem cria preside. A ata pode ser editada por qualquer pessoa com acesso
+    // enquanto a sessão está aberta. Encerrar: quem preside ou o admin. Excluir: só o admin.
     function sess(id) { return get(/databases/$(database)/documents/sessions/$(id)).data; }
     function isChair(x) { return isAdmin() || x.chair.uid == request.auth.uid || x.by.uid == request.auth.uid; }
-    function present(id) { return exists(/databases/$(database)/documents/sessions/$(id)/presence/$(request.auth.uid)); }
+    function editingOk(v) { return v == null || (v is map && v.uid == request.auth.uid); }
     match /sessions/{sid} {
       allow read: if approved();
       allow create: if approved()
-        && request.resource.data.keys().hasOnly(['title', 'when', 'chair', 'by', 'status', 'agenda', 'cur', 'curAt', 'curDur', 'speaker', 'vote', 'polls', 'log', 'minutes', 'quorum', 'attendees', 'ts', 'startedAt', 'endedAt'])
+        && request.resource.data.keys().hasOnly(['title', 'chair', 'by', 'status', 'minutes', 'editing', 'attendees', 'ts', 'startedAt', 'endedAt'])
         && request.resource.data.title is string
         && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 200
-        && isMe(request.resource.data.by)
-        && request.resource.data.chair is map && request.resource.data.chair.uid is string
-        && request.resource.data.status == 'scheduled'
-        && request.resource.data.agenda is list && request.resource.data.agenda.size() <= 50
-        && request.resource.data.ts == request.time;
-      allow update: if approved() && isChair(resource.data)
-        && resource.data.status != 'closed'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'agenda', 'cur', 'curAt', 'curDur', 'speaker', 'vote', 'polls', 'log', 'minutes', 'quorum', 'attendees', 'startedAt', 'endedAt', 'chair'])
-        && request.resource.data.status in ['scheduled', 'live', 'closed']
-        && request.resource.data.agenda.size() <= 50
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['chair'])
-            || isAdmin() || resource.data.by.uid == request.auth.uid);
-      allow delete: if isAdmin()
-        || (approved() && resource.data.by.uid == request.auth.uid && resource.data.status == 'scheduled');
+        && isMe(request.resource.data.by) && isMe(request.resource.data.chair)
+        && request.resource.data.status == 'live'
+        && request.resource.data.minutes == ''
+        && request.resource.data.editing == null
+        && request.resource.data.ts == request.time
+        && request.resource.data.startedAt == request.time;
+      allow update: if approved() && resource.data.status == 'live'
+        && request.resource.data.get('minutes', '') is string
+        && request.resource.data.get('minutes', '').size() <= 50000
+        && editingOk(request.resource.data.get('editing', null))
+        && (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['minutes', 'editing'])
+            || (isChair(resource.data)
+                && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'minutes', 'editing', 'attendees', 'endedAt'])
+                && request.resource.data.status in ['live', 'closed']));
+      allow delete: if isAdmin();
 
+      // Presença: quem abre a tela da sessão aberta é registrado como presente
       match /presence/{uid} {
         allow read: if approved();
         allow create, update: if approved() && request.auth.uid == uid && sess(sid).status == 'live'
           && request.resource.data.keys().hasOnly(['name', 'at'])
           && request.resource.data.name is string && request.resource.data.name.size() <= 80
           && request.resource.data.at == request.time;
-        allow delete: if (signedIn() && request.auth.uid == uid) || isChair(sess(sid));
+        allow delete: if isAdmin();
       }
+      // Restos da versão anterior (fila de fala e votos): só leitura e exclusão pelo admin
       match /queue/{uid} {
         allow read: if approved();
-        allow create: if approved() && request.auth.uid == uid && sess(sid).status == 'live' && present(sid)
-          && request.resource.data.keys().hasOnly(['name', 'at'])
-          && request.resource.data.name is string && request.resource.data.name.size() <= 80
-          && request.resource.data.at == request.time;
-        allow update: if false;
-        allow delete: if (signedIn() && request.auth.uid == uid) || isChair(sess(sid));
+        allow delete: if isAdmin();
       }
       match /ballots/{bid} {
         allow read: if approved();
-        allow create, update: if approved() && sess(sid).status == 'live' && present(sid)
-          && sess(sid).vote != null && sess(sid).vote.open == true
-          && request.resource.data.keys().hasOnly(['v', 'uid', 'name', 'opt', 'ts'])
-          && request.resource.data.uid == request.auth.uid
-          && request.resource.data.v == sess(sid).vote.id
-          && bid == request.resource.data.v + '_' + request.auth.uid
-          && request.resource.data.opt is int && request.resource.data.opt >= 0
-          && request.resource.data.opt < sess(sid).vote.opts.size()
-          && request.resource.data.name is string && request.resource.data.name.size() <= 80
-          && request.resource.data.ts == request.time;
-        allow delete: if isChair(sess(sid));
+        allow delete: if isAdmin();
       }
     }
 

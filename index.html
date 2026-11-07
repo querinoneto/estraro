@@ -410,7 +410,7 @@ function render(){
  if(!ok){S.cur=null;store.watch(null);return gate()}
  const m=location.hash.match(/^#t\/([\w-]+)$/),t=m&&T(m[1]);
  const m2=location.hash.match(/^#s\/([\w-]+)$/),se=m2&&SS(m2[1]);
- store.watch(t?t.id:null);watchS(se?se.id:null);if(se)readFor(se.id);
+ store.watch(t?t.id:null);watchS(se?se.id:null);if(se){readFor(se.id);autoPres(se)}
  S.cur=t?t.id:null;
  if(t&&S.catt.tid&&S.catt.tid!==t.id)S.catt={tid:null,list:[]};
  if(t){const s=seen();s[t.id]=t.act||t.ts;try{localStorage['seen_'+S.user.uid]=JSON.stringify(s)}catch(x){}readFor(t.id)}
@@ -570,7 +570,7 @@ function list(){
  const q=S.q.toLowerCase(),v=S.view,sd=seen();
  let L=S.topics.filter(t=>inView(t,v)&&(S.type=='all'||t.type==S.type)&&(!q||((t.title||'')+(t.body||'')+N(t.author)+asg(t).map(N).join(' ')+cmts(t).map(c=>c.text||'').join(' ')+(t.files||[]).map(f=>f&&f.name).join(' ')).toLowerCase().includes(q)));
  L.sort((a,b)=>v=='encerrados'?fin(b).at-fin(a).at:(b.pinned?1:0)-(a.pinned?1:0)||(S.type=='reminder'?(a.due>b.due?1:-1):S.sort=='act'?(b.act||b.ts)-(a.act||a.ts):b.ts-a.ts));
- return `${S.fail?`<div class="banner err">⚠ ${e(S.fail)}</div>`:''}${S.sessions.filter(x=>x.status=='live').map(x=>`<div class="banner live">Sessão ao vivo agora: <b>${e(x.title)}</b>. <button class="lnk" onclick="go('s/${sid(x.id)}')">Entrar</button></div>`).join('')}${isAdmin()&&pendU().length?`<div class="banner">👥 <b>${pendU().length}</b> cadastro(s) aguardando sua aprovação. <button class="lnk" onclick="S.view='cadastros';go('')">Revisar agora</button></div>`:''}${unread()?`<div class="banner">🔔 Você tem <b>${unread()}</b> menção(ões) não lida(s). <button class="lnk" onclick="S.view='mencoes';go('')">Ver agora</button></div>`:''}
+ return `${S.fail?`<div class="banner err">⚠ ${e(S.fail)}</div>`:''}${isAdmin()&&pendU().length?`<div class="banner">👥 <b>${pendU().length}</b> cadastro(s) aguardando sua aprovação. <button class="lnk" onclick="S.view='cadastros';go('')">Revisar agora</button></div>`:''}${unread()?`<div class="banner">🔔 Você tem <b>${unread()}</b> menção(ões) não lida(s). <button class="lnk" onclick="S.view='mencoes';go('')">Ver agora</button></div>`:''}
  <h2 style="margin:0 0 10px">${VIEWS[v]}</h2>
  <div class="tabs">${[['all','Todos'],['topic','💬 Tópicos'],['poll','📊 Enquetes'],['reminder','📋 Tarefas']].map(([k,x])=>`<button class="btn ${S.type==k?'':'ghost'}" onclick="S.type='${k}';render()">${x}</button>`).join('')}
  </div>
@@ -1234,197 +1234,106 @@ function notebook(){
  <div class="card list">${L.length?L.map(n=>{const d=nd(n)||{title:'Decifrando…',text:'',files:[]};return `<div class="row ${N0&&N0.id==n.id?'on':''}" onclick="noteOpen('${sid(n.id)}')"><span style="font-size:22px">📝</span><div style="min-width:0;flex:1"><h3>${e(d.title||'(sem título)')}</h3>${d.text?`<div class="meta">${e(String(d.text).replace(/\s+/g,' ').slice(0,140))}</div>`:''}<div class="meta">atualizada ${ago(n.upd||n.ts)}${d.files.length?` · 📎 ${d.files.length} PDF(s)`:''}${n.enc?'':' · cifrando…'}</div></div></div>`}).join(''):'<div class="empty">Nenhuma anotação ainda.</div>'}</div>`;
 }
 
-/* ---------- Sessões ao vivo: pauta, tempo, fila de fala, votação instantânea e ata ----------
-   sessions/{id}: dados da sessão (só a presidência da sessão e o admin alteram).
-   Subcoleções: presence (presenças), queue (pedidos de palavra) e ballots (votos da votação aberta). */
-const KEEP=['vq','vo','slim','pnew'];
+/* ---------- Sessões ----------
+   Criar a sessão já a abre; quem cria preside. Quem abre a tela da sessão aberta conta como presente.
+   A ata pode ser editada por todos enquanto a sessão está aberta: quem está digitando "segura" a ata
+   por alguns segundos, para ninguém apagar o texto do outro. Encerrada, a sessão fica registrada. */
+const KEEP=[];
 const SS=id=>S.sessions.find(x=>x.id==id);
 const sref=id=>db.collection('sessions').doc(id);
-const normS=d=>{const x=dat(d);x.ts=ms(x.ts);x.when=ms(x.when)||null;x.curAt=ms(x.curAt)||0;x.startedAt=ms(x.startedAt)||0;x.endedAt=ms(x.endedAt)||0;
- if(x.speaker)x.speaker={...x.speaker,at:ms(x.speaker.at)||Date.now()};if(x.vote)x.vote={...x.vote,at:ms(x.vote.at)||Date.now()};
- ['agenda','polls','log','attendees'].forEach(k=>{if(!Array.isArray(x[k]))x[k]=[]});if(typeof x.cur!='number')x.cur=-1;x.minutes=typeof x.minutes=='string'?x.minutes:'';return x};
+const normS=d=>{const x=dat(d);x.ts=ms(x.ts);x.startedAt=ms(x.startedAt)||x.ts;x.endedAt=ms(x.endedAt)||0;
+ if(!Array.isArray(x.attendees))x.attendees=[];x.minutes=typeof x.minutes=='string'?x.minutes:'';
+ x.editing=x.editing&&typeof x.editing=='object'?{...x.editing,at:+x.editing.at||0}:null;return x};
 let swid=null,swun=[];
 function watchS(id){
- if(id===swid)return;swun.forEach(f=>f());swun=[];swid=id;S.sp=[];S.sq=[];S.sb=[];S.min=null;if(!id)return;
- const r=sref(id),L=(c,k,srt)=>swun.push(r.collection(c).onSnapshot(sn=>{if(swid!==id)return;S[k]=sn.docs.map(d=>{const x=dat(d);x.at=ms(x.at);x.ts=ms(x.ts);return x});if(srt)S[k].sort((a,b)=>a.at-b.at);render()},()=>{}));
- L('presence','sp',1);L('queue','sq',1);L('ballots','sb');
+ if(id===swid)return;swun.forEach(f=>f());swun=[];swid=id;S.sp=[];S.min=null;if(!id)return;
+ swun.push(sref(id).collection('presence').onSnapshot(sn=>{if(swid!==id)return;S.sp=sn.docs.map(d=>{const x=dat(d);x.at=ms(x.at);return x}).sort((a,b)=>a.at-b.at);render()},()=>{}));
 }
-const isChairS=x=>!!(x&&S.user&&(isAdmin()||x.chair.uid==S.user.uid||x.by.uid==S.user.uid));
-const SST={scheduled:'Convocada',live:'Ao vivo',closed:'Encerrada'};
-const mmss=sec=>{const a=Math.abs(sec),m=Math.floor(a/60),x=Math.floor(a%60);return m+':'+String(x).padStart(2,'0')};
-const tickTxt=end=>{const r=(end-Date.now())/1000;return r>=0?mmss(r)+' restantes':mmss(r)+' além do tempo'};
-const tick=end=>`<span class="tick ${end<Date.now()?'over':''}" data-end="${end}">${tickTxt(end)}</span>`;
-setInterval(()=>document.querySelectorAll('.tick').forEach(el=>{const end=+el.dataset.end;if(!end)return;el.textContent=tickTxt(end);el.classList.toggle('over',end<Date.now())}),1000);
-const slog=(x,txt)=>[...(x.log||[]),{at:Date.now(),txt:String(txt).slice(0,300)}].slice(-500);
-async function sUpd(id,upd){try{await sref(id).update(upd);return true}catch(x){saveFail(x);return false}}
-/* resultado: a opção mais votada; "Abstenção" não vence */
-function voteRes(opts,counts){
- const valid=opts.map((o,i)=>fold(o).startsWith('absten')?-1:counts[i]),m=Math.max(0,...valid);
- if(!m)return'sem votos válidos';
- const w=opts.filter((o,i)=>valid[i]==m).map(o=>'“'+o+'”');
- return w.length>1?`empate entre ${w.join(', ')} (${m} voto(s) cada)`:`${w[0]} (${m} voto(s))`;
-}
-async function voteFields(x){
- const v=x.vote,bs=(await sref(x.id).collection('ballots').get()).docs.map(d=>d.data()).filter(b=>b.v==v.id);
- const counts=v.opts.map((_,i)=>bs.filter(b=>b.opt===i).length);
- return{id:v.id,q:v.q,point:typeof v.point=='number'?v.point:-1,at:v.at||Date.now(),closedAt:Date.now(),present:S.sp.length,res:voteRes(v.opts,counts),
-  items:v.opts.map((o,i)=>({o,n:counts[i],who:bs.filter(b=>b.opt===i).map(b=>String(b.name||''))}))};
-}
-/* ----- Convocar ----- */
+const isChairS=x=>!!(x&&S.user&&(isAdmin()||(x.chair&&x.chair.uid==S.user.uid)||(x.by&&x.by.uid==S.user.uid)));
+const SST={live:'Ao vivo',closed:'Encerrada',scheduled:'Não iniciada'};
+/* presença automática: basta abrir a tela da sessão aberta */
+const presDone=new Set();
+function autoPres(x){if(x.status!='live'||presDone.has(x.id))return;presDone.add(x.id);sPresence(x.id).catch(()=>presDone.delete(x.id))}
+async function sPresence(id){await sref(id).collection('presence').doc(S.user.uid).set({name:S.user.name,at:TS()})}
+/* ----- Criar (já aberta) ----- */
 function sNew(){
- const open=S.topics.filter(t=>!arch(t)).sort((a,b)=>(b.act||b.ts)-(a.act||a.ts));
- $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card"><h3 style="margin-top:0">Convocar sessão</h3>
- <input id="sn" class="f" maxlength="200" placeholder="Título (ex.: Reunião ordinária de novembro)">
- <label class="meta">Data e hora (opcional)</label><input id="sw" class="f" type="datetime-local">
- <label class="meta">Presidente da sessão (conduz a reunião)</label>
- <select id="sc" class="f">${dir().map(([i,n])=>`<option value="${e(i)}" ${i==S.user.uid?'selected':''}>${e(n)}${R({uid:i})?' · '+e(R({uid:i})):''}</option>`).join('')}</select>
- <div style="display:flex;gap:10px;flex-wrap:wrap"><div style="flex:1;min-width:150px"><label class="meta">Quórum mínimo (opcional)</label><input id="sqm" class="f" type="number" min="0" max="200" placeholder="ex.: 5"></div>
- <div style="flex:1;min-width:150px"><label class="meta">Tempo por ponto (min)</label><input id="sd" class="f" type="number" min="1" max="240" value="10"></div></div>
- <label class="meta">Pauta: um ponto por linha</label><textarea id="sa" class="f" rows="4" placeholder="Aprovação da ata anterior&#10;Prestação de contas&#10;Assuntos gerais"></textarea>
- ${open.length?`<label class="meta">Incluir itens do portal na pauta (opcional)</label><div class="pick">${open.slice(0,60).map(t=>`<label><input type="checkbox" name="si" value="${e(t.id)}"> ${e(t.title)} <span class="meta">· ${e((TYPES[t.type]||'').replace(/^\S+\s/,''))}</span></label>`).join('')}</div>`:''}
- <p class="meta">Todos serão avisados da convocação. Pontos podem ser incluídos durante a sessão.</p>
- <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn" id="pbtn" onclick="sCreate()">Convocar</button></div></div></div>`;
+ $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card" style="max-width:460px"><h3 style="margin-top:0">Nova sessão</h3>
+ <input id="sn" class="f" maxlength="200" value="${e('Reunião da Diretoria – '+new Date().toLocaleDateString('pt-BR'))}" onkeydown="if(event.key=='Enter')sCreate()">
+ <p class="meta">A sessão começa assim que você criar, e você a preside.</p>
+ <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn" id="pbtn" onclick="sCreate()">Iniciar sessão</button></div></div></div>`;
+ const i=$('sn');i.focus();i.select();
 }
 async function sCreate(){
- const title=$('sn').value.trim(),dur=Math.max(1,Math.min(240,+$('sd').value||10)),cu=$('sc').value,q=Math.max(0,Math.min(200,parseInt($('sqm').value)||0));
- if(!title)return alert('Informe o título da sessão.');if(!S.people[cu])return alert('Escolha quem preside a sessão.');
- const ag=$('sa').value.split('\n').map(x=>x.trim()).filter(Boolean).map(t=>({t:t.slice(0,200),tid:null,dur,done:false}));
- [...document.querySelectorAll('input[name="si"]:checked')].forEach(x=>{const t=T(x.value);if(t)ag.push({t:t.title.slice(0,200),tid:t.id,dur,done:false})});
- if(ag.length>50)return alert('No máximo 50 pontos de pauta.');
- const wv=$('sw').value,when=wv?firebase.firestore.Timestamp.fromMillis(new Date(wv).getTime()):null;
- const r=db.collection('sessions').doc(),b=db.batch();
- b.set(r,{title,when,chair:{uid:cu,name:S.people[cu].name},by:who(),status:'scheduled',agenda:ag,cur:-1,curAt:null,curDur:0,speaker:null,vote:null,polls:[],log:[],minutes:'',quorum:q,attendees:[],ts:TS(),startedAt:null,endedAt:null});
- notify(b,{tid:r.id,cid:null,title,text:wv?'Sessão convocada para '+fmt(new Date(wv).getTime()):'Sessão convocada'},{all:true,uids:[]},Object.fromEntries(Object.keys(S.people).map(u=>[u,'session'])));
- try{await b.commit();closeM();go('s/'+r.id)}catch(x){saveFail(x)}
-}
-async function sDel(id){
- const x=SS(id);if(!x||!confirm('Excluir esta sessão convocada? Todos perdem o acesso a ela.'))return;
- try{for(const c of ['presence','queue','ballots'])await delDocs((await sref(id).collection(c).get()).docs);await sref(id).delete();S.view='sessoes';go('')}catch(e2){saveFail(e2)}
-}
-/* ----- Condução (presidente da sessão) ----- */
-async function sOpen(id){
- const x=SS(id);if(!x||!confirm('Abrir a sessão agora? Todos serão avisados.'))return;
- const b=db.batch();b.update(sref(id),{status:'live',startedAt:TS(),log:slog(x,`Sessão aberta por ${S.user.name}`)});
- notify(b,{tid:id,cid:null,title:x.title,text:'A sessão foi aberta agora. Entre e marque presença.'},{all:false,uids:[]},Object.fromEntries(Object.keys(S.people).map(u=>[u,'live'])));
- try{await b.commit()}catch(e2){saveFail(e2)}
-}
-function sPoint(id,i){
- const x=SS(id);if(!x||!x.agenda[i])return;
- const ag=x.agenda.map((p,k)=>k===x.cur&&k!==i?{...p,done:true}:k===i?{...p,done:false}:p);
- sUpd(id,{agenda:ag,cur:i,curAt:TS(),curDur:+(ag[i].dur||10),log:slog(x,`Ponto ${i+1} em discussão: ${ag[i].t}`)});
-}
-function sNext(id){const x=SS(id),i=x.agenda.findIndex((p,k)=>!p.done&&k!==x.cur);if(i<0)return alert('Não há mais pontos pendentes.');sPoint(id,i)}
-function sDone(id){const x=SS(id);if(!x||x.cur<0)return;sUpd(id,{agenda:x.agenda.map((p,k)=>k===x.cur?{...p,done:true}:p),cur:-1,curAt:null,log:slog(x,`Ponto ${x.cur+1} concluído: ${x.agenda[x.cur].t}`)})}
-function sExt(id,mi){const x=SS(id);if(!x||x.cur<0)return;sUpd(id,{curDur:(x.curDur||10)+mi,log:slog(x,`Tempo do ponto ${x.cur+1} prorrogado em ${mi} min`)})}
-function sAddPoint(id){
- const x=SS(id),v=(($('pnew')||{}).value||'').trim();if(!x||!v)return;if(x.agenda.length>=50)return alert('No máximo 50 pontos de pauta.');
- S.kv.pnew='';sUpd(id,{agenda:[...x.agenda,{t:v.slice(0,200),tid:null,dur:10,done:false}],log:slog(x,`Ponto incluído na pauta: ${v.slice(0,200)}`)});
-}
-function sGrant(id,uid){
- const x=SS(id),q=S.sq.find(y=>y.id==uid);if(!x||!q)return;
- const lim=Math.max(1,Math.min(30,parseInt((($('slim')||{}).value))||3)),b=db.batch();
- b.delete(sref(id).collection('queue').doc(uid));
- b.update(sref(id),{speaker:{uid,name:q.name,at:TS(),lim:lim*60},log:slog(x,`${q.name} recebeu a palavra (${lim} min)`)});
- b.commit().catch(saveFail);
-}
-function sDrop(id,uid){sref(id).collection('queue').doc(uid).delete().catch(saveFail)}
-function sEndSpeech(id){const x=SS(id);if(!x||!x.speaker)return;sUpd(id,{speaker:null,log:slog(x,`${x.speaker.name} concluiu a fala`)})}
-function sSpkExt(id){const x=SS(id);if(!x||!x.speaker)return;sUpd(id,{speaker:{...x.speaker,at:firebase.firestore.Timestamp.fromMillis(x.speaker.at),lim:x.speaker.lim+60}})}
-function sVoteOpen(id){
- const x=SS(id);if(!x)return;
- const q=(($('vq')||{}).value||'').trim()||(x.cur>=0?x.agenda[x.cur].t:''),opts=((($('vo')||{}).value||'').trim()||'Sim; Não; Abstenção').split(/;|\n/).map(o=>o.trim()).filter(Boolean);
- if(!q)return alert('Escreva a pergunta da votação.');
- if(opts.length<2||opts.length>10)return alert('Use de 2 a 10 opções, separadas por ponto e vírgula.');
- delete S.kv.vq;delete S.kv.vo;
- sUpd(id,{vote:{id:'v'+Date.now().toString(36),q:q.slice(0,300),opts:opts.map(o=>o.slice(0,100)),open:true,at:TS(),point:x.cur},log:slog(x,`Votação aberta: ${q.slice(0,200)}`)});
-}
-async function sVoteClose(id){
- const x=SS(id);if(!x||!x.vote)return;
- try{const pl=await voteFields(x);await sref(id).update({vote:null,polls:[...x.polls,pl],log:slog(x,`Votação encerrada: “${pl.q.slice(0,150)}”. Resultado: ${pl.res}`)})}catch(e2){saveFail(e2)}
-}
-async function sClose(id){
- const x=SS(id);if(!x||!confirm('Encerrar a sessão? Depois disso, a sessão e a ata não podem mais ser alteradas.'))return;
+ const title=$('sn').value.trim();if(!title)return alert('Dê um título à sessão.');
+ const r=db.collection('sessions').doc(),pb=$('pbtn');if(pb)pb.disabled=true;
  try{
-  let polls=x.polls,log=x.log;
-  if(x.vote){const pl=await voteFields(x);polls=[...polls,pl];log=slog({log},`Votação encerrada: “${pl.q.slice(0,150)}”. Resultado: ${pl.res}`)}
-  if(S.min&&S.min.sid==id)S.min.dirty=false;
-  const minutes=(S.min&&S.min.sid==id?S.min.v:x.minutes).slice(0,50000);
-  await sref(id).update({status:'closed',endedAt:TS(),speaker:null,vote:null,polls,minutes,cur:-1,curAt:null,
-   agenda:x.agenda.map((p,k)=>k===x.cur?{...p,done:true}:p),attendees:S.sp.map(p=>({uid:p.id,name:String(p.name||''),at:p.at||0})),
-   log:slog({log},`Sessão encerrada por ${S.user.name} (${S.sp.length} presente(s))`)});
+  await r.set({title:title.slice(0,200),chair:who(),by:who(),status:'live',minutes:'',editing:null,attendees:[],ts:TS(),startedAt:TS(),endedAt:null});
+  closeM();go('s/'+r.id);
+ }catch(x){if(pb)pb.disabled=false;saveFail(x)}
+}
+/* ----- Encerrar e excluir ----- */
+async function sClose(id){
+ const x=SS(id);if(!x||!confirm('Encerrar a sessão? Depois disso, a ata não pode mais ser alterada.'))return;
+ try{
+  const minutes=(S.min&&S.min.sid==id&&S.min.dirty?S.min.v:x.minutes).slice(0,50000);
+  if(S.min&&S.min.sid==id)S.min.dirty=false;clearTimeout(minT);clearTimeout(relT);
+  await sref(id).update({status:'closed',endedAt:TS(),minutes,editing:null,attendees:S.sp.map(p=>({uid:p.id,name:String(p.name||''),at:p.at||0}))});
  }catch(e2){saveFail(e2)}
 }
-/* ----- Ata redigida ao vivo (salva sozinha) ----- */
-let minT=null;
-function minInput(id,el){S.min={sid:id,v:el.value,dirty:true};const st=$('mst');if(st)st.textContent='salvando…';clearTimeout(minT);minT=setTimeout(()=>minSave(id),1200)}
+async function sDel(id){
+ const x=SS(id);if(!x||!isAdmin())return;
+ if(!confirm(`Excluir permanentemente a sessão “${x.title}”, com a ata e a lista de presentes?\n\nIsto não pode ser desfeito.`))return;
+ try{for(const c of ['presence','queue','ballots'])await delDocs((await sref(id).collection(c).get()).docs);await sref(id).delete();S.view='sessoes';go('')}catch(e2){saveFail(e2)}
+}
+/* ----- Ata compartilhada ----- */
+const LOCK=15000;
+const lockOther=x=>x.editing&&x.editing.uid!=S.user.uid&&Date.now()-x.editing.at<LOCK?x.editing:null;
+let minT=null,relT=null,lastClaim=0;
+function minInput(id,el){
+ const x=SS(id);if(!x||x.status!='live')return;
+ S.min={sid:id,v:el.value,dirty:true};
+ if(Date.now()-lastClaim>5000){lastClaim=Date.now();sref(id).update({editing:{uid:S.user.uid,name:S.user.name,at:Date.now()}}).catch(()=>{})}
+ clearTimeout(minT);minT=setTimeout(()=>minSave(id),1200);
+}
 async function minSave(id){
- const m=S.min;if(!m||m.sid!=id)return;const v=m.v;
- try{await sref(id).update({minutes:v.slice(0,50000)});if(S.min&&S.min.v===v)S.min.dirty=false;const st=$('mst');if(st)st.textContent='salvo'}
- catch(x){const st=$('mst');if(st)st.textContent='não foi possível salvar'}
+ const m=S.min,x=SS(id);if(!m||m.sid!=id||!x)return;
+ const o=lockOther(x);
+ if(o){alert(`${o.name} começou a editar a ata ao mesmo tempo. Seu último trecho ainda não foi salvo: copie-o e tente de novo daqui a alguns segundos.`);return}
+ const v=m.v;
+ try{
+  await sref(id).update({minutes:v.slice(0,50000),editing:{uid:S.user.uid,name:S.user.name,at:Date.now()}});lastClaim=Date.now();
+  if(S.min&&S.min.v===v)S.min.dirty=false;
+  clearTimeout(relT);relT=setTimeout(()=>{const y=SS(id);if(y&&y.status=='live'&&y.editing&&y.editing.uid==S.user.uid&&!(S.min&&S.min.dirty))sref(id).update({editing:null}).catch(()=>{})},LOCK-3000);
+ }catch(e2){}
 }
-/* ----- Participação ----- */
-async function sPresence(id,on){
- const r=sref(id).collection('presence').doc(S.user.uid);
- try{if(on)await r.set({name:S.user.name,at:TS()});else{await sref(id).collection('queue').doc(S.user.uid).delete().catch(()=>{});await r.delete()}}catch(x){saveFail(x)}
-}
-async function sAsk(id,on){const r=sref(id).collection('queue').doc(S.user.uid);try{on?await r.set({name:S.user.name,at:TS()}):await r.delete()}catch(x){saveFail(x)}}
-async function sBallot(id,i){
- const x=SS(id),v=x&&x.vote;if(!v||!v.open)return;
- try{await sref(id).collection('ballots').doc(v.id+'_'+S.user.uid).set({v:v.id,uid:S.user.uid,name:S.user.name,opt:i,ts:TS()})}catch(e2){saveFail(e2)}
-}
+/* reavalia a trava da ata a cada 3 s (quando alguém para de digitar, a ata volta a ficar livre) */
+setInterval(()=>{const m=location.hash.match(/^#s\/([\w-]+)$/),x=m&&SS(m[1]);if(x&&x.status=='live'&&x.editing&&x.editing.uid!=S.user.uid&&!document.activeElement.matches('#sm'))render()},3000);
 /* ----- Telas ----- */
 function sessionsList(){
- const o={live:0,scheduled:1,closed:2},L=S.sessions.slice().sort((a,b)=>o[a.status]-o[b.status]||(a.status=='closed'?(b.endedAt||b.ts)-(a.endedAt||a.ts):(a.when||a.ts)-(b.when||b.ts)));
- return `<h2 style="margin:0 0 4px">🎙 Sessões</h2><p class="meta" style="margin:0 0 10px">Reuniões da Diretoria em tempo real: pauta com tempo por ponto, fila de fala, votação instantânea e ata redigida ao vivo.</p>
- <button class="btn" style="margin-bottom:12px" onclick="sNew()">＋ Convocar sessão</button>
+ const L=S.sessions.slice().sort((a,b)=>(a.status=='live'?0:1)-(b.status=='live'?0:1)||(b.endedAt||b.startedAt||b.ts)-(a.endedAt||a.startedAt||a.ts));
+ return `<h2 style="margin:0 0 4px">🎙 Sessões</h2><p class="meta" style="margin:0 0 10px">Reuniões da Diretoria com ata compartilhada e sala de áudio e vídeo. As sessões encerradas ficam registradas aqui.</p>
+ <button class="btn" style="margin-bottom:12px" onclick="sNew()">＋ Nova sessão</button>
  <div class="card list">${L.length?L.map(x=>`<div class="row" onclick="go('s/${sid(x.id)}')"><div style="min-width:0;flex:1"><h3>${e(x.title)} <span class="sbadge ${x.status}">${SST[x.status]||''}</span></h3>
- <div class="meta">${x.status=='closed'?'encerrada em '+fmt(x.endedAt||x.ts):x.when?'marcada para '+fmt(x.when):'sem data marcada'} · presidente: ${e(N(x.chair))}${roleT(x.chair)} · ${x.agenda.length} ponto(s)${x.status=='closed'?` · ${x.attendees.length} presente(s)`:''}</div></div></div>`).join(''):'<div class="empty">Nenhuma sessão ainda.</div>'}</div>`;
+ <div class="meta">${x.status=='closed'?'realizada em '+fmt(x.startedAt)+(x.endedAt?' · encerrada às '+new Date(x.endedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):''):'aberta em '+fmt(x.startedAt)} · presidente: ${e(N(x.chair))}${roleT(x.chair)}${x.status=='closed'?` · ${x.attendees.length} presente(s)`:''}</div></div></div>`).join(''):'<div class="empty">Nenhuma sessão ainda.</div>'}</div>`;
 }
 function sessionView(x){
- const me=S.user.uid,ch=isChairS(x),live=x.status=='live',closed=x.status=='closed',i0=sid(x.id);
- const pres=closed?x.attendees.map(a=>({id:a.uid,name:a.name,at:a.at})):S.sp,amP=S.sp.some(p=>p.id==me),q=S.sq,qi=q.findIndex(y=>y.id==me);
- const tot=Object.keys(S.people).length,need=x.quorum||0,okQ=!need||pres.length>=need;
- const cp=x.cur>=0&&x.agenda[x.cur],cpEnd=cp?x.curAt+(x.curDur||cp.dur||10)*60000:0,sp=x.speaker,v=x.vote;
- const myB=v&&S.sb.find(b=>b.v==v.id&&b.uid==me),nB=v?S.sb.filter(b=>b.v==v.id).length:0;
+ const ch=isChairS(x),live=x.status=='live',closed=x.status=='closed',i0=sid(x.id);
+ const pres=closed?x.attendees.map(a=>({id:a.uid,name:a.name})):S.sp;
  const head=`<button class="btn ghost sm" onclick="S.view='sessoes';go('')">← Sessões</button>
  <div class="card" style="margin-top:12px"><h2 style="margin:0 0 4px">${e(x.title)} <span class="sbadge ${x.status}">${SST[x.status]||''}</span></h2>
- <div class="meta">Presidente da sessão: <b>${e(N(x.chair))}</b>${roleT(x.chair)} · convocada por ${e(N(x.by))}${x.when?' · marcada para '+fmt(x.when):''}${x.startedAt?' · aberta em '+fmt(x.startedAt):''}${x.endedAt?' · encerrada em '+fmt(x.endedAt):''}</div>
- <div class="meta" style="margin-top:4px">Presentes: <b>${pres.length}</b> de ${tot}${need?` · quórum mínimo ${need}: <b class="${okQ?'ok':'bad'}">${okQ?'atingido':'não atingido'}</b>`:''}</div>
- ${!closed&&!live&&ch?`<div class="ctl" style="margin-top:10px"><button class="btn" onclick="sOpen('${i0}')">Abrir a sessão</button><button class="btn ghost danger" onclick="sDel('${i0}')">Excluir convocação</button></div>`:''}
- ${!closed&&!live&&!ch?'<p class="meta" style="margin:8px 0 0">A sessão ainda não foi aberta. Você será avisado quando começar.</p>':''}
- ${live?`<div class="ctl" style="margin-top:10px">${amP?`<span class="ok"><b>Você está presente.</b></span><button class="btn ghost sm" onclick="sPresence('${i0}',false)">Sair da sessão</button>`:`<button class="btn" onclick="sPresence('${i0}',true)">Marcar presença</button>`}</div>
- ${jaasOn()?`<div class="ctl">${CALL&&CALL.sid==x.id?`<span class="ok"><b>Você está na sala de áudio e vídeo.</b></span><button class="btn ghost sm" onclick="callLeave()">Sair da sala</button>`:`<button id="cjb" class="btn" onclick="callJoin('${i0}')">Entrar na sala de áudio e vídeo</button><span class="meta">Ao entrar, sua presença é marcada. A sala continua aberta enquanto você navega pelo portal.</span>`}</div>`:isAdmin()?'<p class="meta">A sala de áudio e vídeo ainda não foi configurada.</p>':''}`:''}</div>`;
- /* painel do presidente */
+ <div class="meta">Presidente: <b>${e(N(x.chair))}</b>${roleT(x.chair)} · aberta em ${fmt(x.startedAt)}${x.endedAt?' · encerrada em '+fmt(x.endedAt):''}</div>
+ ${live&&jaasOn()?`<div class="ctl" style="margin-top:10px">${CALL&&CALL.sid==x.id?`<span class="ok"><b>Você está na sala de áudio e vídeo.</b></span><button class="btn ghost sm" onclick="callLeave()">Sair da sala</button>`:`<button id="cjb" class="btn" onclick="callJoin('${i0}')">Entrar na sala de áudio e vídeo</button>`}</div>`:''}
+ ${closed&&isAdmin()?`<div class="ctl" style="margin-top:10px"><button class="btn ghost sm danger" onclick="sDel('${i0}')">Excluir permanentemente</button></div>`:''}
+ ${x.status=='scheduled'&&isAdmin()?`<p class="meta" style="margin:8px 0 0">Sessão criada na versão anterior do portal, nunca iniciada.</p><div class="ctl"><button class="btn ghost sm danger" onclick="sDel('${i0}')">Excluir permanentemente</button></div>`:''}</div>`;
  const panel=live&&ch?`<div class="card chair"><h3>Painel do presidente</h3>
- <div class="kpi"><div>Quórum<b class="${okQ?'ok':'bad'}">${pres.length}${need?' / '+need:''}</b><span class="meta">${need?(okQ?'atingido':'não atingido'):'sem mínimo definido'}</span></div>
- <div>Pontos<b>${x.agenda.filter(p=>p.done).length} / ${x.agenda.length}</b><span class="meta">${x.agenda.filter((p,k)=>!p.done&&k!==x.cur).length} pendente(s)</span></div>
- <div>Votação<b>${v?nB+' voto(s)':'—'}</b><span class="meta">${v?'aberta':'nenhuma aberta'}</span></div>
- <div>Fila de fala<b>${q.length}</b><span class="meta">pedido(s)</span></div></div>
- <b>Pauta</b><div class="ctl">${cp?`<button class="btn sm" onclick="sDone('${i0}')">Concluir ponto ${x.cur+1}</button><button class="btn ghost sm" onclick="sExt('${i0}',5)">+5 min</button>`:''}<button class="btn ghost sm" onclick="sNext('${i0}')">${cp?'Próximo ponto':'Iniciar próximo ponto'}</button></div>
- <div class="ctl"><input id="pnew" class="f" maxlength="200" placeholder="Incluir ponto na pauta" onkeydown="if(event.key=='Enter')sAddPoint('${i0}')"><button class="btn ghost sm" onclick="sAddPoint('${i0}')">Incluir</button></div>
- <div class="sec"><b>Fila de fala</b> <span class="meta">· tempo de fala:</span> <input id="slim" class="f" type="number" min="1" max="30" value="3" style="width:64px;display:inline-block;margin:0"> <span class="meta">min</span>
- ${sp?`<div class="ctl">Com a palavra: <b>${e(N(sp))}</b>${roleT(sp)} · ${tick(sp.at+sp.lim*1000)}<button class="btn ghost sm" onclick="sSpkExt('${i0}')">+1 min</button><button class="btn sm" onclick="sEndSpeech('${i0}')">Encerrar fala</button></div>`:''}
- ${q.length?q.map((y,k)=>`<div class="ctl"><span class="meta">${k+1}º</span> <b>${e(N(y))}</b>${roleT(y)} <span class="meta">pediu às ${new Date(y.at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span><button class="btn sm" onclick="sGrant('${i0}','${sid(y.id)}')">Conceder a palavra</button><button class="btn ghost sm" onclick="sDrop('${i0}','${sid(y.id)}')">Retirar</button></div>`).join(''):'<p class="meta" style="margin:6px 0">Ninguém pediu a palavra.</p>'}</div>
- <div class="sec"><b>Votação instantânea</b>${v?`<div class="ctl">“${e(v.q)}” · <b>${nB}</b> de ${S.sp.length} presente(s) já votaram<button class="btn sm" onclick="sVoteClose('${i0}')">Encerrar votação</button></div>
- <div class="meta">${v.opts.map((o,k)=>`${e(o)}: ${S.sb.filter(b=>b.v==v.id&&b.opt===k).length}`).join(' · ')}</div>`
- :`<div class="ctl"><input id="vq" class="f" maxlength="300" placeholder="Pergunta${cp?' (vazio = '+e(cp.t)+')':''}"></div><div class="ctl"><input id="vo" class="f" maxlength="600" placeholder="Opções separadas por ; (vazio = Sim; Não; Abstenção)"><button class="btn sm" onclick="sVoteOpen('${i0}')">Abrir votação</button></div>`}</div>
- ${CALL&&CALL.sid==x.id?`<div class="sec"><b>Sala de áudio e vídeo</b><div class="ctl"><button class="btn ghost sm" onclick="callMuteAll()">Silenciar todos os microfones</button><span class="meta">Funciona quando você é moderador da sala.</span></div></div>`:''}
- <div class="sec ctl"><button class="btn ghost danger" onclick="sClose('${i0}')">Encerrar a sessão</button></div></div>`:'';
- /* o que todos veem */
- const now=live?`<div class="card"><b>Agora</b>
- <div style="margin:8px 0">${cp?`Ponto ${x.cur+1} em discussão: <b>${e(cp.t)}</b>${cp.tid&&T(cp.tid)?` <button class="lnk" onclick="go('t/${sid(cp.tid)}')">abrir item</button>`:''} · ${tick(cpEnd)}`:'<span class="meta">Nenhum ponto em discussão no momento.</span>'}</div>
- <div style="margin:8px 0">${sp?`Com a palavra: <b>${e(N(sp))}</b>${roleT(sp)} · ${tick(sp.at+sp.lim*1000)}`:'<span class="meta">Ninguém com a palavra.</span>'}</div>
- <div class="ctl">${amP?(qi>=0?`<span>Você é o ${qi+1}º na fila de fala.</span><button class="btn ghost sm" onclick="sAsk('${i0}',false)">Retirar pedido</button>`:(sp&&sp.uid==me?'<b class="ok">Você está com a palavra.</b>':`<button class="btn ghost" onclick="sAsk('${i0}',true)">Pedir a palavra</button>`)):'<span class="meta">Marque presença para pedir a palavra e votar.</span>'}</div>
- ${v?`<div class="sec"><b>Votação aberta:</b> ${e(v.q)}<div class="ctl">${v.opts.map((o,k)=>`<button class="btn sm ${myB&&myB.opt===k?'':'ghost'}" ${amP?`onclick="sBallot('${i0}',${k})"`:'disabled'}>${e(o)}</button>`).join('')}</div>
- <div class="meta">${myB?`Seu voto: <b>${e(v.opts[myB.opt]||'')}</b> (você pode mudar até a votação ser encerrada).`:amP?'Você ainda não votou.':'Só quem marcou presença vota.'} ${nB} voto(s) registrado(s). O resultado aparece quando a votação for encerrada.</div></div>`:''}</div>`:'';
- const agenda=`<div class="card"><b>Pauta (${x.agenda.length})</b>${x.agenda.length?x.agenda.map((p,k)=>`<div class="pt ${k===x.cur?'cur':p.done?'done':''}"><span class="n">${k+1}</span><div style="flex:1;min-width:0">${e(p.t)}${p.tid&&T(p.tid)?` <button class="lnk" onclick="go('t/${sid(p.tid)}')">abrir item</button>`:''}<div class="meta">${k===x.cur?'em discussão':p.done?'concluído':'pendente'} · ${p.dur||10} min</div></div>${live&&ch&&k!==x.cur?`<button class="btn ghost sm" onclick="sPoint('${i0}',${k})">${p.done?'Retomar':'Iniciar'}</button>`:''}</div>`).join(''):'<p class="meta">Sem pontos de pauta.</p>'}</div>`;
- const polls=x.polls.length?`<div class="card"><b>Votações realizadas (${x.polls.length})</b>${x.polls.map(pl=>`<div class="sec" style="margin-top:8px"><b>${e(pl.q)}</b><div>Resultado: <b>${e(pl.res)}</b></div>${(pl.items||[]).map(it=>`<div class="meta">${e(it.o)}: ${it.n}${it.who&&it.who.length?' · '+it.who.map(w=>e(w)).join(', '):''}</div>`).join('')}<div class="meta">${pl.present||0} presente(s) na votação · encerrada às ${new Date(pl.closedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div></div>`).join('')}</div>`:'';
- const minV=S.min&&S.min.sid==x.id&&S.min.dirty?S.min.v:x.minutes;
- const ata=`<div class="card"><b>Ata</b> ${ch&&!closed?'<span class="meta">· redigida ao vivo; salva sozinha (<span id="mst">salvo</span>)</span>':''}
- ${ch&&!closed?`<textarea id="sm" class="f" rows="10" maxlength="50000" placeholder="Redija aqui a ata. Os participantes acompanham em tempo real." oninput="minInput('${i0}',this)">${e(minV)}</textarea>`:(x.minutes?`<div class="ata body">${e(x.minutes)}</div>`:'<p class="meta">Nada redigido ainda.</p>')}
- <details style="margin-top:8px"${closed?' open':''}><summary class="meta">Registro automático (${x.log.length})</summary>${x.log.map(l=>`<div class="h">${e(l.txt)} <span class="meta">· ${new Date(l.at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span></div>`).join('')||'<p class="meta">Sem registros.</p>'}</details></div>`;
- const people=`<div class="card"><b>${closed?'Presentes na sessão':'Presentes agora'} (${pres.length})</b><div class="voters" style="margin:8px 0 0">${pres.map(p=>`<span class="who">${av({uid:p.id,name:p.name},'sm')} ${e(N({uid:p.id,name:p.name}))}${roleT({uid:p.id})}</span>`).join('')||'<span class="meta">Ninguém.</span>'}</div></div>`;
- return head+panel+now+agenda+polls+ata+people;
+ ${CALL&&CALL.sid==x.id?`<div class="ctl"><button class="btn ghost sm" onclick="callMuteAll()">Silenciar todos os microfones</button></div>`:''}
+ <div class="ctl"><button class="btn ghost danger" onclick="sClose('${i0}')">Encerrar a sessão</button></div></div>`:'';
+ const o=live?lockOther(x):null,minV=S.min&&S.min.sid==x.id&&S.min.dirty?S.min.v:x.minutes;
+ const ata=`<div class="card"><b>Ata</b>
+ ${live?`${o?`<p class="meta" style="margin:6px 0">✍ ${e(o.name)} está editando a ata agora. Você poderá editar assim que a pessoa parar de digitar.</p>`:''}<textarea id="sm" class="f" rows="12" maxlength="50000" ${o?'readonly':''} placeholder="Redija aqui a ata. Todos os presentes podem escrever e acompanham em tempo real." oninput="minInput('${i0}',this)">${e(minV)}</textarea>`
+ :(x.minutes?`<div class="ata body">${e(x.minutes)}</div>`:'<p class="meta">Nenhuma ata registrada.</p>')}</div>`;
+ const people=`<div class="card"><b>${closed?'Presentes na sessão':'Presentes'} (${pres.length})</b><div class="voters" style="margin:8px 0 0">${pres.map(p=>`<span class="who">${av({uid:p.id,name:p.name},'sm')} ${e(N({uid:p.id,name:p.name}))}${roleT({uid:p.id})}</span>`).join('')||'<span class="meta">Ninguém.</span>'}</div></div>`;
+ return head+panel+ata+people;
 }
 /* ---------- Sala de áudio e vídeo da sessão (JaaS / Jitsi, da 8x8) ----------
    A chamada fica num painel flutuante fora da área redesenhada, para não cair quando a página atualiza
@@ -1454,7 +1363,7 @@ async function callJoin(id){
  if(CALL)callLeave(true);
  const btn=$('cjb');if(btn){btn.disabled=true;btn.textContent='Conectando…'}
  try{
-  if(!S.sp.some(p=>p.id==S.user.uid))await sPresence(id,true);
+  if(!S.sp.some(p=>p.id==S.user.uid))await sPresence(id);
   await loadJitsi();
   const {jwt,room}=await callCred(id),name=S.user.name+(R(S.user)?` (${R(S.user)})`:'');
   const c=$('call');c.hidden=false;document.body.classList.add('incall');$('calltip').hidden=!isMobile();$('callt').textContent=x.title;$('callbox').innerHTML='';
