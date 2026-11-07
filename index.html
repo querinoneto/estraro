@@ -521,7 +521,7 @@ function myTasks(){
  return `<h2 style="margin:0 0 4px">📋 Minhas tarefas</h2><p class="meta" style="margin:0">Tarefas em que você é responsável. Abra uma tarefa para atualizar o status.</p>
  ${sec('A fazer',L.filter(t=>stOf(t)=='todo').sort(byDue),'Nada a fazer 🎉')}
  ${sec('Em andamento',L.filter(t=>stOf(t)=='doing').sort(byDue),'Nenhuma tarefa em andamento.')}
- ${sec('Concluídas e encerradas (recentes)',fe,'Nenhuma ainda.')}`;
+ ${sec('Concluídas',fe,'Nenhuma ainda.')}`;
 }
 const myOpen=()=>S.user?S.topics.filter(t=>isRem(t)&&!arch(t)&&isAsg(t,S.user.uid)).length:0;
 const inView=(t,v)=>v=='encerrados'?arch(t):!arch(t);
@@ -540,7 +540,7 @@ function list(){
  <div class="tabs">${[['all','Todos'],['topic','💬 Tópicos'],['poll','📊 Enquetes'],['reminder','📋 Tarefas']].map(([k,x])=>`<button class="btn ${S.type==k?'':'ghost'}" onclick="S.type='${k}';render()">${x}</button>`).join('')}
  </div>
  <div class="card list">${L.length?L.map(t=>{const un=(t.act||t.ts)>(sd[t.id]||0)&&t.author.uid!=S.user.uid||(t.act||t.ts)>(sd[t.id]||0)&&sd[t.id],f=fin(t),nf=Array.isArray(t.files)?t.files.length:0;
- return `<div class="row" onclick="go('t/${sid(t.id)}')">${un?'<span class="dot" title="Novidades"></span>':'<span style="width:9px"></span>'}${av(t.author)}<div><h3>${t.pinned?'📌 ':''}${e(t.title)}</h3>
+ return `<div class="row" onclick="go('t/${sid(t.id)}')">${un?'<span class="dot" title="Novidades"></span>':'<span style="width:9px"></span>'}${av(t.author)}<div><h3>${e(t.title)}${t.pinned?' <span class="tag">Fixado</span>':''}</h3>
  <div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))}${roleT(t.author)} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${isRem(t)?' · '+STL[stOf(t)]:''}${asg(t).length?' · 👥 '+names(asg(t)):''}${!f&&t.ends?` · ⏳ até ${fmt(t.ends)}`:''}${nf?` · 📎 ${nf}`:''}${linksOf(t.id).length?` · 🔗 ${linksOf(t.id).length}`:''}${f?` · 📦 ${f.auto?'prazo encerrado':e(N(f.by))}, ${fmt(f.at)}`:''}</div></div>
  <div class="stats">${t.type=='poll'?'':`💬 ${cmts(t).length}`}</div></div>`}).join(''):'<div class="empty">Nada por aqui ainda.</div>'}</div>`;
 }
@@ -715,7 +715,7 @@ function detail(t){
  const showC=t.type!='poll'||cm.length;
  return `<button class="btn ghost sm noprint" onclick="go('')">← Voltar</button>
  <div class="card" style="margin-top:12px"><div style="display:flex;gap:12px;align-items:center">${av(t.author)}<div>${TYPES[t.type]||''}<div class="meta">${e(N(t.author))}${roleT(t.author)} · ${fmt(t.ts)}</div></div></div>
- <h2>${t.pinned?'📌 ':''}${e(t.title)}</h2>
+ <h2>${e(t.title)}${t.pinned?' <span class="tag">Fixado</span>':''}</h2>
  ${off?`<div class="banner">📦 ${f.auto?`Enquete encerrada automaticamente ao fim do prazo (${fmt(t.ends||f.at)})`:`Encerrado e arquivado por <b>${e(N(f.by))}</b>${roleT(f.by)} em ${fmt(f.at)}`}${note?`<br><b>Conclusão:</b> ${rich(note)}`:''}</div>`:''}
  <div class="body">${rich(t.body)}</div>${atts(t.files)}${extra}
  <div class="noprint" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
