@@ -90,10 +90,19 @@ async function readDoc(path, idToken, env, fetchFn) {
 const str = (f) => (f && typeof f.stringValue === 'string' ? f.stringValue : '');
 const mapStr = (f, k) => (f && f.mapValue && f.mapValue.fields ? str(f.mapValue.fields[k]) : '');
 
+/* Aceita a chave nos dois formatos usuais: "BEGIN PRIVATE KEY" (PKCS#8) e "BEGIN RSA PRIVATE KEY" (PKCS#1). */
+const derLen = (n) => (n < 128 ? [n] : n < 256 ? [0x81, n] : n < 65536 ? [0x82, n >> 8, n & 255] : [0x83, n >> 16, (n >> 8) & 255, n & 255]);
+const der = (tag, bytes) => Uint8Array.from([tag, ...derLen(bytes.length), ...bytes]);
+function pkcs1to8(p1) {
+  const algId = Uint8Array.from([0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00]);
+  return der(0x30, [...Uint8Array.from([0x02, 0x01, 0x00]), ...algId, ...der(0x04, p1)]);
+}
 async function privateKey(pem) {
-  const b = String(pem || '').replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+  const txt = String(pem || '').replace(/\\n/g, '\n');
+  const b = txt.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
   if (!b) throw new Error('nokey');
-  const raw = Uint8Array.from(atob(b), (c) => c.charCodeAt(0));
+  let raw = Uint8Array.from(atob(b), (c) => c.charCodeAt(0));
+  if (/BEGIN RSA PRIVATE KEY/.test(txt)) raw = pkcs1to8(raw);
   return crypto.subtle.importKey('pkcs8', raw, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
 }
 
