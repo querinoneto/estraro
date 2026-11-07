@@ -92,6 +92,7 @@ details.dz{margin-top:16px;text-align:left;border-top:1px solid var(--bd);paddin
 .callbar .btn.ghost{color:#fff;border-color:#ffffff55}#callbox{flex:1;min-height:0}#callbox iframe{width:100%;height:100%;border:0}
 body.incall .fab{display:none}body.incall .wrap{margin-bottom:380px}
 @media(max-width:760px){#call{left:8px;right:8px;bottom:8px;width:auto;height:46vh}#call.big{top:8px;height:auto;width:auto}body.incall .wrap{margin-bottom:50vh}}
+.calltip{background:#fff4d6;color:#5c4400;font-size:13px;padding:4px 10px}.calltip[hidden]{display:none}
 .removed{color:var(--mu);font-style:italic;margin:2px 0}
 .wrap{max-width:1080px;margin:20px auto;padding:0 16px;display:grid;grid-template-columns:240px 1fr;gap:20px}
 aside .box,.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:14px}
@@ -152,7 +153,7 @@ body.anon header{display:none}
 <button class="btn fab" aria-label="Novo item" onclick="compose()">＋</button>
 <div id="modal"></div>
 <div id="mbox" role="listbox" hidden></div>
-<div id="call" hidden><div class="callbar"><b id="callt">Sala de áudio e vídeo</b><span style="margin-left:auto"></span><button id="callsz" class="btn ghost sm" onclick="callSize()">Ampliar</button><button class="btn sm" onclick="callLeave()">Sair da sala</button></div><div id="callbox"></div></div>
+<div id="call" hidden><div class="callbar"><b id="callt">Sala de áudio e vídeo</b><span style="margin-left:auto"></span><button id="callsz" class="btn ghost sm" onclick="callSize()">Ampliar</button><button class="btn sm" onclick="callLeave()">Sair da sala</button></div><div id="calltip" class="calltip" hidden>Sem som? Toque uma vez dentro da sala.</div><div id="callbox"></div></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -1392,7 +1393,8 @@ function sessionView(x){
  ${!closed&&!live&&ch?`<div class="ctl" style="margin-top:10px"><button class="btn" onclick="sOpen('${i0}')">Abrir a sessão</button><button class="btn ghost danger" onclick="sDel('${i0}')">Excluir convocação</button></div>`:''}
  ${!closed&&!live&&!ch?'<p class="meta" style="margin:8px 0 0">A sessão ainda não foi aberta. Você será avisado quando começar.</p>':''}
  ${live?`<div class="ctl" style="margin-top:10px">${amP?`<span class="ok"><b>Você está presente.</b></span><button class="btn ghost sm" onclick="sPresence('${i0}',false)">Sair da sessão</button>`:`<button class="btn" onclick="sPresence('${i0}',true)">Marcar presença</button>`}</div>
- ${jaasOn()?`<div class="ctl">${CALL&&CALL.sid==x.id?`<span class="ok"><b>Você está na sala de áudio e vídeo.</b></span><button class="btn ghost sm" onclick="callLeave()">Sair da sala</button>`:`<button id="cjb" class="btn" onclick="callJoin('${i0}')">Entrar na sala de áudio e vídeo</button><span class="meta">Ao entrar, sua presença é marcada. A sala continua aberta enquanto você navega pelo portal.</span>`}</div>`:isAdmin()?'<p class="meta">A sala de áudio e vídeo ainda não foi configurada.</p>':''}`:''}</div>`;
+ ${jaasOn()?`<div class="ctl">${CALL&&CALL.sid==x.id?`<span class="ok"><b>Você está na sala de áudio e vídeo.</b></span><button class="btn ghost sm" onclick="callLeave()">Sair da sala</button>`:(isMobile()?`<button class="btn" onclick="callExternal('${i0}')">Entrar na sala de áudio e vídeo</button><button id="cjb" class="btn ghost sm" onclick="callJoin('${i0}')">Abrir dentro do portal</button><span class="meta">No celular, a sala abre em tela cheia (no navegador ou no aplicativo Jitsi Meet), o que garante o som. Depois, volte a esta aba para votar e pedir a palavra. Sua presença é marcada ao entrar.</span>`
+ :`<button id="cjb" class="btn" onclick="callJoin('${i0}')">Entrar na sala de áudio e vídeo</button><button class="btn ghost sm" onclick="callExternal('${i0}')">Abrir em tela cheia</button><span class="meta">Ao entrar, sua presença é marcada. A sala continua aberta enquanto você navega pelo portal.</span>`)}</div>`:isAdmin()?'<p class="meta">A sala de áudio e vídeo ainda não foi configurada.</p>':''}`:''}</div>`;
  /* painel do presidente */
  const panel=live&&ch?`<div class="card chair"><h3>Painel do presidente</h3>
  <div class="kpi"><div>Quórum<b class="${okQ?'ok':'bad'}">${pres.length}${need?' / '+need:''}</b><span class="meta">${need?(okQ?'atingido':'não atingido'):'sem mínimo definido'}</span></div>
@@ -1436,6 +1438,30 @@ function loadJitsi(){
  return new Promise((ok,no)=>{const sc=document.createElement('script');sc.src=`https://8x8.vc/${CONFIG.jaas.appId}/external_api.js`;sc.async=true;
   sc.onload=()=>window.JitsiMeetExternalAPI?ok():no(new Error('a sala de vídeo não carregou.'));sc.onerror=()=>no(new Error('não foi possível carregar a sala de vídeo (verifique a conexão).'));document.head.appendChild(sc)});
 }
+const isMobile=()=>matchMedia('(max-width: 760px), (pointer: coarse)').matches;
+/* credencial e endereço da sala (com credencial assinada quando o Cloudflare estiver configurado) */
+async function callCred(id){
+ let jwt=null,room=CONFIG.jaas.appId+'/estraro-'+id.toLowerCase();
+ if(CONFIG.jaas.tokenUrl){
+  const r=await fetch(CONFIG.jaas.tokenUrl,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+await au.currentUser.getIdToken()},body:JSON.stringify({session:id})});
+  const j=await r.json().catch(()=>({}));if(!r.ok||!j.jwt)throw new Error(j.error||'não foi possível obter a credencial da sala.');
+  jwt=j.jwt;room=j.room||room;
+ }
+ return{jwt,room};
+}
+/* Abre a sala fora do painel, em tela cheia (no celular, oferece o aplicativo Jitsi Meet) */
+async function callExternal(id){
+ const x=SS(id);if(!x||x.status!='live'||!jaasOn())return;
+ const w=window.open('','_blank');
+ try{w&&(w.document.title='Entrando na sala…',w.document.body.textContent='Entrando na sala de áudio e vídeo…')}catch(_){}
+ try{
+  if(!S.sp.some(p=>p.id==S.user.uid))await sPresence(id,true);
+  const {jwt,room}=await callCred(id),name=S.user.name+(R(S.user)?` (${R(S.user)})`:'');
+  const url=`https://8x8.vc/${room}${jwt?'?jwt='+encodeURIComponent(jwt):''}#userInfo.displayName=${encodeURIComponent(JSON.stringify(name))}&config.prejoinConfig.enabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=true&config.subject=${encodeURIComponent(JSON.stringify(x.title))}`;
+  if(CALL)callLeave(true);
+  if(w)w.location.href=url;else location.href=url;
+ }catch(e2){try{w&&w.close()}catch(_){}alert('Não foi possível entrar na sala: '+((e2&&e2.message)||e2))}
+}
 async function callJoin(id){
  const x=SS(id);if(!x||x.status!='live'||!jaasOn())return;
  if(CALL&&CALL.sid==id)return;
@@ -1444,14 +1470,8 @@ async function callJoin(id){
  try{
   if(!S.sp.some(p=>p.id==S.user.uid))await sPresence(id,true);
   await loadJitsi();
-  let jwt=null,room=CONFIG.jaas.appId+'/estraro-'+id.toLowerCase();
-  const name=S.user.name+(R(S.user)?` (${R(S.user)})`:'');
-  if(CONFIG.jaas.tokenUrl){
-   const r=await fetch(CONFIG.jaas.tokenUrl,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+await au.currentUser.getIdToken()},body:JSON.stringify({session:id})});
-   const j=await r.json().catch(()=>({}));if(!r.ok||!j.jwt)throw new Error(j.error||'não foi possível obter a credencial da sala.');
-   jwt=j.jwt;room=j.room||room;
-  }
-  const c=$('call');c.hidden=false;document.body.classList.add('incall');$('callt').textContent=x.title;$('callbox').innerHTML='';
+  const {jwt,room}=await callCred(id),name=S.user.name+(R(S.user)?` (${R(S.user)})`:'');
+  const c=$('call');c.hidden=false;document.body.classList.add('incall');$('calltip').hidden=!isMobile();$('callt').textContent=x.title;$('callbox').innerHTML='';
   const o={roomName:room,parentNode:$('callbox'),width:'100%',height:'100%',lang:'pt-BR',
    userInfo:{displayName:name,email:S.user.email},
    configOverwrite:{prejoinPageEnabled:false,prejoinConfig:{enabled:false},startWithAudioMuted:false,startAudioMuted:99,startWithVideoMuted:true,disableDeepLinking:true,subject:x.title},
