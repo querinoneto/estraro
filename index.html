@@ -1322,18 +1322,15 @@ function sessionView(x){
  const head=`<button class="btn ghost sm" onclick="S.view='sessoes';go('')">← Sessões</button>
  <div class="card" style="margin-top:12px"><h2 style="margin:0 0 4px">${e(x.title)} <span class="sbadge ${x.status}">${SST[x.status]||''}</span></h2>
  <div class="meta">Presidente: <b>${e(N(x.chair))}</b>${roleT(x.chair)} · aberta em ${fmt(x.startedAt)}${x.endedAt?' · encerrada em '+fmt(x.endedAt):''}</div>
- ${live&&jaasOn()?`<div class="ctl" style="margin-top:10px">${CALL&&CALL.sid==x.id?`<span class="ok"><b>Você está na sala de áudio e vídeo.</b></span><button class="btn ghost sm" onclick="callLeave()">Sair da sala</button>`:`<button id="cjb" class="btn" onclick="callJoin('${i0}')">Entrar na sala de áudio e vídeo</button>`}</div>`:''}
+ ${live&&(jaasOn()||ch)?`<div class="ctl" style="margin-top:10px">${jaasOn()?(CALL&&CALL.sid==x.id?`<button class="btn ghost" onclick="callLeave()">Sair da sala de áudio e vídeo</button>`:`<button id="cjb" class="btn" onclick="callJoin('${i0}')">Entrar na sala de áudio e vídeo</button>`):''}${ch?`<button class="btn ghost danger" style="margin-left:auto" onclick="sClose('${i0}')">Encerrar a sessão</button>`:''}</div>`:''}
  ${closed&&isAdmin()?`<div class="ctl" style="margin-top:10px"><button class="btn ghost sm danger" onclick="sDel('${i0}')">Excluir permanentemente</button></div>`:''}
  ${x.status=='scheduled'&&isAdmin()?`<p class="meta" style="margin:8px 0 0">Sessão criada na versão anterior do portal, nunca iniciada.</p><div class="ctl"><button class="btn ghost sm danger" onclick="sDel('${i0}')">Excluir permanentemente</button></div>`:''}</div>`;
- const panel=live&&ch?`<div class="card chair"><h3>Painel do presidente</h3>
- ${CALL&&CALL.sid==x.id?`<div class="ctl"><button class="btn ghost sm" onclick="callMuteAll()">Silenciar todos os microfones</button></div>`:''}
- <div class="ctl"><button class="btn ghost danger" onclick="sClose('${i0}')">Encerrar a sessão</button></div></div>`:'';
  const o=live?lockOther(x):null,minV=S.min&&S.min.sid==x.id&&S.min.dirty?S.min.v:x.minutes;
  const ata=`<div class="card"><b>Ata</b>
  ${live?`${o?`<p class="meta" style="margin:6px 0">✍ ${e(o.name)} está editando a ata agora. Você poderá editar assim que a pessoa parar de digitar.</p>`:''}<textarea id="sm" class="f" rows="12" maxlength="50000" ${o?'readonly':''} placeholder="Redija aqui a ata. Todos os presentes podem escrever e acompanham em tempo real." oninput="minInput('${i0}',this)">${e(minV)}</textarea>`
  :(x.minutes?`<div class="ata body">${e(x.minutes)}</div>`:'<p class="meta">Nenhuma ata registrada.</p>')}</div>`;
  const people=`<div class="card"><b>${closed?'Presentes na sessão':'Presentes'} (${pres.length})</b><div class="voters" style="margin:8px 0 0">${pres.map(p=>`<span class="who">${av({uid:p.id,name:p.name},'sm')} ${e(N({uid:p.id,name:p.name}))}${roleT({uid:p.id})}</span>`).join('')||'<span class="meta">Ninguém.</span>'}</div></div>`;
- return head+panel+ata+people;
+ return head+ata+people;
 }
 /* ---------- Sala de áudio e vídeo da sessão (JaaS / Jitsi, da 8x8) ----------
    A chamada fica num painel flutuante fora da área redesenhada, para não cair quando a página atualiza
@@ -1385,7 +1382,6 @@ function callLeave(quiet){
  document.body.classList.remove('incall');if(!quiet&&S.user)render();
 }
 function callSize(){const c=$('call');c.classList.toggle('big');$('callsz').textContent=c.classList.contains('big')?'Reduzir':'Ampliar'}
-function callMuteAll(){if(!CALL)return;try{CALL.api.executeCommand('muteEveryone','audio')}catch(e2){alert('Só o moderador da sala pode silenciar todos.')}}
 /* se a sessão for encerrada, a sala fecha sozinha */
 setInterval(()=>{if(CALL){const x=SS(CALL.sid);if(S.sessions.length&&(!x||x.status!='live')){callLeave();alert('A sessão foi encerrada; a sala de áudio e vídeo foi fechada.')}}},3000);
 render();
