@@ -86,6 +86,12 @@ details.dz{margin-top:16px;text-align:left;border-top:1px solid var(--bd);paddin
 .ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}.ctl input.f{width:auto;flex:1;min-width:140px;margin:0}
 .sec{margin-top:14px;padding-top:10px;border-top:1px solid var(--bd)}
 .ata{white-space:pre-wrap;word-wrap:break-word}
+#call{position:fixed;right:16px;bottom:16px;width:480px;height:340px;z-index:8;background:#111;border-radius:12px;box-shadow:0 8px 28px #0005;display:flex;flex-direction:column;overflow:hidden}
+#call[hidden]{display:none}#call.big{top:86px;height:auto;width:min(1000px,calc(100vw - 32px))}
+.callbar{display:flex;gap:6px;align-items:center;padding:6px 8px;background:#1d2b24;color:#fff;font-size:14px}.callbar b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.callbar .btn.ghost{color:#fff;border-color:#ffffff55}#callbox{flex:1;min-height:0}#callbox iframe{width:100%;height:100%;border:0}
+body.incall .fab{display:none}body.incall .wrap{margin-bottom:380px}
+@media(max-width:760px){#call{left:8px;right:8px;bottom:8px;width:auto;height:46vh}#call.big{top:8px;height:auto;width:auto}body.incall .wrap{margin-bottom:50vh}}
 .removed{color:var(--mu);font-style:italic;margin:2px 0}
 .wrap{max-width:1080px;margin:20px auto;padding:0 16px;display:grid;grid-template-columns:240px 1fr;gap:20px}
 aside .box,.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:14px}
@@ -146,6 +152,7 @@ body.anon header{display:none}
 <button class="btn fab" aria-label="Novo item" onclick="compose()">＋</button>
 <div id="modal"></div>
 <div id="mbox" role="listbox" hidden></div>
+<div id="call" hidden><div class="callbar"><b id="callt">Sala de áudio e vídeo</b><span style="margin-left:auto"></span><button id="callsz" class="btn ghost sm" onclick="callSize()">Ampliar</button><button class="btn sm" onclick="callLeave()">Sair da sala</button></div><div id="callbox"></div></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -161,6 +168,9 @@ const CONFIG={
   messagingSenderId:"883853740762",
   appId:"1:883853740762:web:9c7c06447bec47fc17f3e3"
  },
+ /* Sala de áudio e vídeo das sessões (JaaS, da 8x8). appId: o "vpaas-magic-cookie-..." da conta.
+    tokenUrl: endereço do emissor de credenciais no Cloudflare (pasta jaas-worker); vazio = entrar sem credencial. */
+ jaas:{appId:'vpaas-magic-cookie-1127c80e5f8f4ff294278b5ecbb32cac',tokenUrl:''},
  admins:['querino.neto@gmail.com'] // administradores: aprovam cadastros e podem fixar/encerrar/apagar qualquer item. Mantenha igual ao e-mail nas regras do Firestore.
 };
 /* "reminder" é o nome interno das tarefas (mantido para os itens já existentes continuarem funcionando) */
@@ -264,7 +274,7 @@ const store={
   ids.forEach(id=>b.update(db.collection('users').doc(id),ok?{approved:true,rejected:false}:{approved:false,rejected:true}));
   return b.commit().catch(x=>{if(!quiet)saveFail(x)})}
 };
-const stopData=()=>{subs.forEach(f=>f());subs=[];unsubU&&unsubU();unsubU=null;store.watch(null);watchS(null);
+const stopData=()=>{subs.forEach(f=>f());subs=[];unsubU&&unsubU();unsubU=null;store.watch(null);watchS(null);callLeave(true);
  NK=NKraw=null;S.ndec={};S.ncfg=undefined;S.sessions=[];S.min=null;
  S.avatars={};S.people={};S.links=[];S.notes=[];S.ned=null;S.pl=false;S.ul=false;S.notifs=[];S.topics=[];S.comments={};S.users=[];S.allowed={}};
 /* Mantém o próprio nome no diretório de pessoas */
@@ -1381,7 +1391,8 @@ function sessionView(x){
  <div class="meta" style="margin-top:4px">Presentes: <b>${pres.length}</b> de ${tot}${need?` · quórum mínimo ${need}: <b class="${okQ?'ok':'bad'}">${okQ?'atingido':'não atingido'}</b>`:''}</div>
  ${!closed&&!live&&ch?`<div class="ctl" style="margin-top:10px"><button class="btn" onclick="sOpen('${i0}')">Abrir a sessão</button><button class="btn ghost danger" onclick="sDel('${i0}')">Excluir convocação</button></div>`:''}
  ${!closed&&!live&&!ch?'<p class="meta" style="margin:8px 0 0">A sessão ainda não foi aberta. Você será avisado quando começar.</p>':''}
- ${live?`<div class="ctl" style="margin-top:10px">${amP?`<span class="ok"><b>Você está presente.</b></span><button class="btn ghost sm" onclick="sPresence('${i0}',false)">Sair da sessão</button>`:`<button class="btn" onclick="sPresence('${i0}',true)">Marcar presença</button>`}</div>`:''}</div>`;
+ ${live?`<div class="ctl" style="margin-top:10px">${amP?`<span class="ok"><b>Você está presente.</b></span><button class="btn ghost sm" onclick="sPresence('${i0}',false)">Sair da sessão</button>`:`<button class="btn" onclick="sPresence('${i0}',true)">Marcar presença</button>`}</div>
+ ${jaasOn()?`<div class="ctl">${CALL&&CALL.sid==x.id?`<span class="ok"><b>Você está na sala de áudio e vídeo.</b></span><button class="btn ghost sm" onclick="callLeave()">Sair da sala</button>`:`<button id="cjb" class="btn" onclick="callJoin('${i0}')">Entrar na sala de áudio e vídeo</button><span class="meta">Ao entrar, sua presença é marcada. A sala continua aberta enquanto você navega pelo portal.</span>`}</div>`:isAdmin()?'<p class="meta">A sala de áudio e vídeo ainda não foi configurada.</p>':''}`:''}</div>`;
  /* painel do presidente */
  const panel=live&&ch?`<div class="card chair"><h3>Painel do presidente</h3>
  <div class="kpi"><div>Quórum<b class="${okQ?'ok':'bad'}">${pres.length}${need?' / '+need:''}</b><span class="meta">${need?(okQ?'atingido':'não atingido'):'sem mínimo definido'}</span></div>
@@ -1396,6 +1407,7 @@ function sessionView(x){
  <div class="sec"><b>Votação instantânea</b>${v?`<div class="ctl">“${e(v.q)}” · <b>${nB}</b> de ${S.sp.length} presente(s) já votaram<button class="btn sm" onclick="sVoteClose('${i0}')">Encerrar votação</button></div>
  <div class="meta">${v.opts.map((o,k)=>`${e(o)}: ${S.sb.filter(b=>b.v==v.id&&b.opt===k).length}`).join(' · ')}</div>`
  :`<div class="ctl"><input id="vq" class="f" maxlength="300" placeholder="Pergunta${cp?' (vazio = '+e(cp.t)+')':''}"></div><div class="ctl"><input id="vo" class="f" maxlength="600" placeholder="Opções separadas por ; (vazio = Sim; Não; Abstenção)"><button class="btn sm" onclick="sVoteOpen('${i0}')">Abrir votação</button></div>`}</div>
+ ${CALL&&CALL.sid==x.id?`<div class="sec"><b>Sala de áudio e vídeo</b><div class="ctl"><button class="btn ghost sm" onclick="callMuteAll()">Silenciar todos os microfones</button><span class="meta">Funciona quando você é moderador da sala.</span></div></div>`:''}
  <div class="sec ctl"><button class="btn ghost danger" onclick="sClose('${i0}')">Encerrar a sessão</button></div></div>`:'';
  /* o que todos veem */
  const now=live?`<div class="card"><b>Agora</b>
@@ -1413,6 +1425,54 @@ function sessionView(x){
  const people=`<div class="card"><b>${closed?'Presentes na sessão':'Presentes agora'} (${pres.length})</b><div class="voters" style="margin:8px 0 0">${pres.map(p=>`<span class="who">${av({uid:p.id,name:p.name},'sm')} ${e(N({uid:p.id,name:p.name}))}${roleT({uid:p.id})}</span>`).join('')||'<span class="meta">Ninguém.</span>'}</div></div>`;
  return head+panel+now+agenda+polls+ata+people;
 }
+/* ---------- Sala de áudio e vídeo da sessão (JaaS / Jitsi, da 8x8) ----------
+   A chamada fica num painel flutuante fora da área redesenhada, para não cair quando a página atualiza
+   ou quando a pessoa navega pelo portal. Com tokenUrl configurado, cada pessoa recebe uma credencial
+   assinada (só membros aprovados; presidente da sessão como moderador). */
+let CALL=null;
+const jaasOn=()=>!!(CONFIG.jaas&&/^vpaas-magic-cookie-[a-f0-9]+$/.test(CONFIG.jaas.appId||''));
+function loadJitsi(){
+ if(window.JitsiMeetExternalAPI)return Promise.resolve();
+ return new Promise((ok,no)=>{const sc=document.createElement('script');sc.src=`https://8x8.vc/${CONFIG.jaas.appId}/external_api.js`;sc.async=true;
+  sc.onload=()=>window.JitsiMeetExternalAPI?ok():no(new Error('a sala de vídeo não carregou.'));sc.onerror=()=>no(new Error('não foi possível carregar a sala de vídeo (verifique a conexão).'));document.head.appendChild(sc)});
+}
+async function callJoin(id){
+ const x=SS(id);if(!x||x.status!='live'||!jaasOn())return;
+ if(CALL&&CALL.sid==id)return;
+ if(CALL)callLeave(true);
+ const btn=$('cjb');if(btn){btn.disabled=true;btn.textContent='Conectando…'}
+ try{
+  if(!S.sp.some(p=>p.id==S.user.uid))await sPresence(id,true);
+  await loadJitsi();
+  let jwt=null,room=CONFIG.jaas.appId+'/estraro-'+id.toLowerCase();
+  const name=S.user.name+(R(S.user)?` (${R(S.user)})`:'');
+  if(CONFIG.jaas.tokenUrl){
+   const r=await fetch(CONFIG.jaas.tokenUrl,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+await au.currentUser.getIdToken()},body:JSON.stringify({session:id})});
+   const j=await r.json().catch(()=>({}));if(!r.ok||!j.jwt)throw new Error(j.error||'não foi possível obter a credencial da sala.');
+   jwt=j.jwt;room=j.room||room;
+  }
+  const c=$('call');c.hidden=false;document.body.classList.add('incall');$('callt').textContent=x.title;$('callbox').innerHTML='';
+  const o={roomName:room,parentNode:$('callbox'),width:'100%',height:'100%',lang:'pt-BR',
+   userInfo:{displayName:name,email:S.user.email},
+   configOverwrite:{prejoinPageEnabled:false,prejoinConfig:{enabled:false},startWithVideoMuted:true,disableDeepLinking:true,subject:x.title},
+   interfaceConfigOverwrite:{MOBILE_APP_PROMO:false}};
+  if(jwt)o.jwt=jwt;
+  const api=new JitsiMeetExternalAPI('8x8.vc',o);
+  CALL={sid:id,api};
+  api.addListener('readyToClose',()=>callLeave());
+ }catch(e2){callLeave(true);alert('Não foi possível entrar na sala: '+((e2&&e2.message)||e2))}
+ finally{render()}
+}
+function callLeave(quiet){
+ if(CALL){try{CALL.api.dispose()}catch(_){}}
+ CALL=null;const c=$('call');if(c){c.hidden=true;c.classList.remove('big')}
+ const bx=$('callbox');if(bx)bx.innerHTML='';const sz=$('callsz');if(sz)sz.textContent='Ampliar';
+ document.body.classList.remove('incall');if(!quiet&&S.user)render();
+}
+function callSize(){const c=$('call');c.classList.toggle('big');$('callsz').textContent=c.classList.contains('big')?'Reduzir':'Ampliar'}
+function callMuteAll(){if(!CALL)return;try{CALL.api.executeCommand('muteEveryone','audio')}catch(e2){alert('Só o moderador da sala pode silenciar todos.')}}
+/* se a sessão for encerrada, a sala fecha sozinha */
+setInterval(()=>{if(CALL){const x=SS(CALL.sid);if(S.sessions.length&&(!x||x.status!='live')){callLeave();alert('A sessão foi encerrada; a sala de áudio e vídeo foi fechada.')}}},3000);
 render();
 </script>
 </body>
