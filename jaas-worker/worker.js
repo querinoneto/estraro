@@ -36,9 +36,13 @@ const fromB64url = (s) => {
 };
 const parseJson = (bytes) => JSON.parse(new TextDecoder().decode(bytes));
 
+/* aceita "https://site.com", "https://site.com/" ou até "https://site.com/pasta": vale o domínio */
+const allowedOrigins = (env) => String(env.ALLOWED_ORIGINS || '').split(',').map((x) => x.trim()).filter(Boolean)
+  .map((x) => { try { return new URL(x).origin; } catch (e) { return x.replace(/\/$/, ''); } });
+
 function corsHeaders(req, env) {
   const origin = req.headers.get('Origin') || '';
-  const allowed = String(env.ALLOWED_ORIGINS || '').split(',').map((x) => x.trim().replace(/\/$/, '')).filter(Boolean);
+  const allowed = allowedOrigins(env);
   const ok = !allowed.length || allowed.includes(origin);
   return {
     'Access-Control-Allow-Origin': ok ? (origin || '*') : 'null',
@@ -129,7 +133,7 @@ export async function handle(req, env, fetchFn = fetch) {
   if (req.method !== 'POST') return reply(req, env, 405, { error: 'Use POST.' });
   for (const k of ['JAAS_APP_ID', 'JAAS_KEY_ID', 'JAAS_PRIVATE_KEY', 'FIREBASE_PROJECT_ID'])
     if (!env[k]) return reply(req, env, 500, { error: `Configuração incompleta: falta ${k}.` });
-  const allowed = String(env.ALLOWED_ORIGINS || '').split(',').map((x) => x.trim().replace(/\/$/, '')).filter(Boolean);
+  const allowed = allowedOrigins(env);
   if (allowed.length && !allowed.includes(req.headers.get('Origin') || '')) return reply(req, env, 403, { error: 'Origem não autorizada.' });
 
   const idToken = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
