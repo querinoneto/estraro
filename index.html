@@ -186,7 +186,6 @@ const av=(u,c)=>{const id=u&&(u.uid||u.id),p=id&&S.avatars[id],k='av'+(c?' '+c:'
 /* Cargo na Diretoria (informado pela própria pessoa em "Meu perfil") */
 const R=u=>{const id=u&&(u.uid||u.id);return(id&&S.people[id]&&S.people[id].role)||''};
 const roleT=u=>{const r=R(u);return r?` <span class="role">${e(r)}</span>`:''};
-const ROLES=['Presidente','Vice-presidente','Secretário(a)-geral','1º(ª) Secretário(a)','2º(ª) Secretário(a)','Tesoureiro(a)','1º(ª) Tesoureiro(a)','2º(ª) Tesoureiro(a)','Diretor(a) de Comunicação','Diretor(a) de Eventos','Diretor(a) de Ensino','Diretor(a) de Relações Internacionais','Diretor(a) Jurídico(a)','Conselheiro(a) Fiscal','Membro da Diretoria'];
 $('hl').src=LOGO;
 const seen=()=>{try{return JSON.parse(localStorage['seen_'+S.user.uid]||'{}')||{}}catch(x){return{}}};
 
@@ -432,8 +431,7 @@ function roleEdit(k){
  S.re={uid:puid(g),name:(S.people[puid(g)]||{}).name||g.name};
  $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card" style="max-width:420px"><h3 style="margin-top:0">🏷 Cargo de ${e(S.re.name)}</h3>
  <p class="meta" style="margin:0 0 6px">O cargo aparece ao lado do nome nos tópicos, enquetes, tarefas e comentários. A própria pessoa também pode alterá-lo em “Meu perfil”.</p>
- <input id="rr" class="f" maxlength="60" list="roles2" placeholder="Ex.: Tesoureiro(a)" value="${e(R({uid:S.re.uid}))}" onkeydown="if(event.key=='Enter')roleSave()">
- <datalist id="roles2">${ROLES.map(r=>`<option value="${e(r)}">`).join('')}</datalist>
+ <input id="rr" class="f" maxlength="60" placeholder="Ex.: Tesoureiro(a)" value="${e(R({uid:S.re.uid}))}" onkeydown="if(event.key=='Enter')roleSave()">
  <div id="err" class="err"></div>
  <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap"><button class="btn ghost" onclick="closeM()">Cancelar</button>${R({uid:S.re.uid})?'<button class="btn ghost danger" onclick="$(\'rr\').value=\'\';roleSave()">Remover cargo</button>':''}<button class="btn" onclick="roleSave()">Salvar</button></div></div></div>`;
  $('rr').focus();
@@ -886,9 +884,8 @@ function profile(){
  <p class="meta" style="margin:8px 0 14px">A foto é recortada em quadrado e reduzida automaticamente.</p>
   <label class="meta" style="display:block;text-align:left">Seu nome (como aparece no portal)</label>
  <input id="pn" class="f" maxlength="80" autocomplete="name" value="${e(S.user.name)}" onkeydown="if(event.key=='Enter')saveProfile()">
- <label class="meta" style="display:block;text-align:left">Seu cargo na Diretoria (opcional; escolha da lista ou escreva)</label>
- <input id="pr" class="f" maxlength="60" list="roles" placeholder="Ex.: Tesoureiro(a)" value="${e(R(S.user))}" onkeydown="if(event.key=='Enter')saveProfile()">
- <datalist id="roles">${ROLES.map(r=>`<option value="${e(r)}">`).join('')}</datalist>
+ <label class="meta" style="display:block;text-align:left">Seu cargo na Diretoria (opcional)</label>
+ <input id="pr" class="f" maxlength="60" placeholder="Ex.: Tesoureiro(a)" value="${e(R(S.user))}" onkeydown="if(event.key=='Enter')saveProfile()">
  <button class="btn" style="width:100%;margin-top:4px" onclick="saveProfile()">Salvar nome e cargo</button>
  <div id="err" class="err" style="margin:4px 0 8px"></div>
  <button class="btn ghost" onclick="closeM()">Fechar</button>
