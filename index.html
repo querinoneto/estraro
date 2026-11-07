@@ -1393,8 +1393,7 @@ function sessionView(x){
  ${!closed&&!live&&ch?`<div class="ctl" style="margin-top:10px"><button class="btn" onclick="sOpen('${i0}')">Abrir a sessão</button><button class="btn ghost danger" onclick="sDel('${i0}')">Excluir convocação</button></div>`:''}
  ${!closed&&!live&&!ch?'<p class="meta" style="margin:8px 0 0">A sessão ainda não foi aberta. Você será avisado quando começar.</p>':''}
  ${live?`<div class="ctl" style="margin-top:10px">${amP?`<span class="ok"><b>Você está presente.</b></span><button class="btn ghost sm" onclick="sPresence('${i0}',false)">Sair da sessão</button>`:`<button class="btn" onclick="sPresence('${i0}',true)">Marcar presença</button>`}</div>
- ${jaasOn()?`<div class="ctl">${CALL&&CALL.sid==x.id?`<span class="ok"><b>Você está na sala de áudio e vídeo.</b></span><button class="btn ghost sm" onclick="callLeave()">Sair da sala</button>`:(isMobile()?`<button class="btn" onclick="callExternal('${i0}')">Entrar na sala de áudio e vídeo</button><button id="cjb" class="btn ghost sm" onclick="callJoin('${i0}')">Abrir dentro do portal</button><span class="meta">No celular, a sala abre em tela cheia (no navegador ou no aplicativo Jitsi Meet), o que garante o som. Depois, volte a esta aba para votar e pedir a palavra. Sua presença é marcada ao entrar.</span>`
- :`<button id="cjb" class="btn" onclick="callJoin('${i0}')">Entrar na sala de áudio e vídeo</button><button class="btn ghost sm" onclick="callExternal('${i0}')">Abrir em tela cheia</button><span class="meta">Ao entrar, sua presença é marcada. A sala continua aberta enquanto você navega pelo portal.</span>`)}</div>`:isAdmin()?'<p class="meta">A sala de áudio e vídeo ainda não foi configurada.</p>':''}`:''}</div>`;
+ ${jaasOn()?`<div class="ctl">${CALL&&CALL.sid==x.id?`<span class="ok"><b>Você está na sala de áudio e vídeo.</b></span><button class="btn ghost sm" onclick="callLeave()">Sair da sala</button>`:`<button id="cjb" class="btn" onclick="callJoin('${i0}')">Entrar na sala de áudio e vídeo</button><span class="meta">Ao entrar, sua presença é marcada. A sala continua aberta enquanto você navega pelo portal.</span>`}</div>`:isAdmin()?'<p class="meta">A sala de áudio e vídeo ainda não foi configurada.</p>':''}`:''}</div>`;
  /* painel do presidente */
  const panel=live&&ch?`<div class="card chair"><h3>Painel do presidente</h3>
  <div class="kpi"><div>Quórum<b class="${okQ?'ok':'bad'}">${pres.length}${need?' / '+need:''}</b><span class="meta">${need?(okQ?'atingido':'não atingido'):'sem mínimo definido'}</span></div>
@@ -1448,19 +1447,6 @@ async function callCred(id){
   jwt=j.jwt;room=j.room||room;
  }
  return{jwt,room};
-}
-/* Abre a sala fora do painel, em tela cheia (no celular, oferece o aplicativo Jitsi Meet) */
-async function callExternal(id){
- const x=SS(id);if(!x||x.status!='live'||!jaasOn())return;
- const w=window.open('','_blank');
- try{w&&(w.document.title='Entrando na sala…',w.document.body.textContent='Entrando na sala de áudio e vídeo…')}catch(_){}
- try{
-  if(!S.sp.some(p=>p.id==S.user.uid))await sPresence(id,true);
-  const {jwt,room}=await callCred(id),name=S.user.name+(R(S.user)?` (${R(S.user)})`:'');
-  const url=`https://8x8.vc/${room}${jwt?'?jwt='+encodeURIComponent(jwt):''}#userInfo.displayName=${encodeURIComponent(JSON.stringify(name))}&config.prejoinConfig.enabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=true&config.subject=${encodeURIComponent(JSON.stringify(x.title))}`;
-  if(CALL)callLeave(true);
-  if(w)w.location.href=url;else location.href=url;
- }catch(e2){try{w&&w.close()}catch(_){}alert('Não foi possível entrar na sala: '+((e2&&e2.message)||e2))}
 }
 async function callJoin(id){
  const x=SS(id);if(!x||x.status!='live'||!jaasOn())return;
