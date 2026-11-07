@@ -382,7 +382,7 @@ function render(){
  S.cur=t?t.id:null;
  if(t&&S.catt.tid&&S.catt.tid!==t.id)S.catt={tid:null,list:[]};
  if(t){const s=seen();s[t.id]=t.act||t.ts;try{localStorage['seen_'+S.user.uid]=JSON.stringify(s)}catch(x){}readFor(t.id)}
- $('app').innerHTML=`<div class="wrap"><aside>${side()}</aside><main>${t?detail(t):(S.view=='cadastros'&&isAdmin()?usersPanel():S.view=='mencoes'?mentionsPanel():S.view=='minhas'?myTasks():S.view=='bloco'?notebook():S.view=='diretoria'?board():list())}</main></div>`;
+ $('app').innerHTML=`<div class="wrap"><aside>${side()}</aside><main>${t?detail(t):(S.view=='cadastros'&&isAdmin()?usersPanel():S.view=='mencoes'?mentionsPanel():S.view=='minhas'?myTasks():S.view=='bloco'?notebook():list())}</main></div>`;
  /* mantém o comentário que estava sendo digitado quando chegam atualizações em tempo real */
  const c=$('ct');
  if(c&&S.draft&&S.draft.id==S.cur){c.value=S.draft.v;if(S.draft.f){c.focus();c.setSelectionRange(c.value.length,c.value.length)}}
@@ -425,14 +425,36 @@ async function delUser(k){
   await b.commit();
  }catch(x){saveFail(x)}
 }
+/* uid da pessoa no diretório (quem tem mais de um cadastro com o mesmo e-mail usa o que já está no diretório) */
+const puid=g=>(g.docs.find(d=>S.people[d.id])||g.docs.slice().sort((a,b)=>(b.created||0)-(a.created||0))[0]||{}).id;
+function roleEdit(k){
+ const g=groups().find(x=>x.email==decodeURIComponent(k));if(!g||!isAdmin())return;
+ S.re={uid:puid(g),name:(S.people[puid(g)]||{}).name||g.name};
+ $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card" style="max-width:420px"><h3 style="margin-top:0">🏷 Cargo de ${e(S.re.name)}</h3>
+ <p class="meta" style="margin:0 0 6px">O cargo aparece ao lado do nome nos tópicos, enquetes, tarefas e comentários. A própria pessoa também pode alterá-lo em “Meu perfil”.</p>
+ <input id="rr" class="f" maxlength="60" list="roles2" placeholder="Ex.: Tesoureiro(a)" value="${e(R({uid:S.re.uid}))}" onkeydown="if(event.key=='Enter')roleSave()">
+ <datalist id="roles2">${ROLES.map(r=>`<option value="${e(r)}">`).join('')}</datalist>
+ <div id="err" class="err"></div>
+ <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap"><button class="btn ghost" onclick="closeM()">Cancelar</button>${R({uid:S.re.uid})?'<button class="btn ghost danger" onclick="$(\'rr\').value=\'\';roleSave()">Remover cargo</button>':''}<button class="btn" onclick="roleSave()">Salvar</button></div></div></div>`;
+ $('rr').focus();
+}
+async function roleSave(){
+ const x=S.re;if(!x||!isAdmin())return;
+ const r=String($('rr').value||'').trim().replace(/\s+/g,' ').slice(0,60),n=String(x.name||'').trim().slice(0,80);
+ if(n.length<2)return showErr('Esta pessoa ainda não tem nome válido no diretório.');
+ try{
+  await db.collection('people').doc(x.uid).set({name:n,role:r,ts:TS()},{merge:true});
+  S.people[x.uid]={...(S.people[x.uid]||{name:n}),role:r};closeM();render();
+ }catch(e2){showErr(e2&&e2.code=='permission-denied'?'Sem permissão para salvar (verifique se as regras foram publicadas no Firestore).':msg(e2))}
+}
 function usersPanel(){
- const row=(g,btns)=>`<div class="row urow" style="cursor:default">${av({name:g.name,uid:(g.docs.find(d=>S.avatars[d.id])||g.docs[0]||{}).id})}<div style="flex:1;min-width:150px"><h3>${e(g.name)}${roleT({uid:(g.docs.find(d=>S.people[d.id])||g.docs[0]||{}).id})}</h3><div class="meta" style="word-break:break-all">${e(g.email)}${g.created?' · cadastro em '+fmt(g.created):''}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap">${btns}</div></div>`;
+ const row=(g,btns)=>`<div class="row urow" style="cursor:default">${av({name:g.name,uid:(g.docs.find(d=>S.avatars[d.id])||g.docs[0]||{}).id})}<div style="flex:1;min-width:150px"><h3>${e(g.name)}${roleT({uid:puid(g)})}</h3><div class="meta" style="word-break:break-all">${e(g.email)}${g.created?' · cadastro em '+fmt(g.created):''}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap">${btns}</div></div>`;
  const sec=(t,L,fn,empty)=>`<h3 style="margin:18px 0 8px">${t} <span class="meta">(${L.length})</span></h3><div class="card list">${L.length?L.map(fn).join(''):`<div class="empty" style="padding:18px">${empty}</div>`}</div>`;
  const k=g=>ek(g.email),rej=groups().filter(g=>g.status=='rejected'),
   delB=g=>`<button class="btn ghost sm danger" title="Excluir cadastro" onclick="delUser('${k(g)}')">🗑 Excluir</button>`;
  return `<h2 style="margin:0 0 4px">👥 Cadastros</h2><p class="meta" style="margin:0">Só quem for aprovado aqui (e tiver confirmado o e-mail) consegue ver e participar do portal.</p>
  ${sec('⏳ Aguardando aprovação',pendU(),g=>row(g,`<button class="btn sm" onclick="setUser('${k(g)}','ok')">✔ Aprovar</button><button class="btn ghost sm danger" onclick="setUser('${k(g)}','no')">Recusar</button>${delB(g)}`),'Nenhum cadastro pendente.')}
- ${sec('✅ Com acesso',members(),g=>row(g,`<button class="btn ghost sm danger" onclick="setUser('${k(g)}','no')">Revogar acesso</button>${delB(g)}`),'Ninguém aprovado ainda.')}
+ ${sec('✅ Com acesso',members(),g=>row(g,`<button class="btn sm ghost" onclick="roleEdit('${k(g)}')">🏷 ${R({uid:puid(g)})?'Mudar cargo':'Definir cargo'}</button><button class="btn ghost sm danger" onclick="setUser('${k(g)}','no')">Revogar acesso</button>${delB(g)}`),'Ninguém aprovado ainda.')}
  ${rej.length?sec('🚫 Recusados ou revogados',rej,g=>row(g,`<button class="btn sm" onclick="setUser('${k(g)}','ok')">↺ Restaurar acesso</button>${delB(g)}`),''):''}`;
 }
 function gate(){
@@ -508,7 +530,7 @@ const inView=(t,v)=>v=='encerrados'?arch(t):!arch(t);
 function side(){
  const rem=S.topics.filter(t=>isRem(t)&&!arch(t)&&t.due).sort((a,b)=>a.due>b.due?1:-1).slice(0,4),un=unread();
  return `<button class="btn newbtn" style="width:100%;margin-bottom:14px" onclick="compose()">＋ Novo</button>
- <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}<button class="cat ${S.view=='minhas'?'on':''}" onclick="S.view='minhas';go('')">📋 Minhas tarefas${myOpen()?`<span class="tag">${myOpen()}</span>`:''}</button><button class="cat ${S.view=='mencoes'?'on':''}" onclick="S.view='mencoes';go('')">🔔 Menções${un?`<span class="tag">${un} nova(s)</span>`:''}</button><button class="cat ${S.view=='bloco'?'on':''}" onclick="S.view='bloco';go('')">📓 Bloco de anotações<span class="meta">🔒</span></button><button class="cat ${S.view=='diretoria'?'on':''}" onclick="S.view='diretoria';go('')">🏛 Diretoria<span class="meta">${Object.keys(S.people).length}</span></button>${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pendU().length?`<span class="tag">${pendU().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
+ <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}<button class="cat ${S.view=='minhas'?'on':''}" onclick="S.view='minhas';go('')">📋 Minhas tarefas${myOpen()?`<span class="tag">${myOpen()}</span>`:''}</button><button class="cat ${S.view=='mencoes'?'on':''}" onclick="S.view='mencoes';go('')">🔔 Menções${un?`<span class="tag">${un} nova(s)</span>`:''}</button><button class="cat ${S.view=='bloco'?'on':''}" onclick="S.view='bloco';go('')">📓 Bloco de anotações<span class="meta">🔒</span></button>${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pendU().length?`<span class="tag">${pendU().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
  <div class="box rem-box"><h4>📋 Próximos prazos</h4>${rem.length?rem.map(r=>`<div style="margin:6px 0;cursor:pointer" onclick="go('t/${sid(r.id)}')"><b>${e(r.title)}</b><div class="meta ${r.due<today()?'due':''}">${r.due<today()?'Vencida · ':''}${fd(r.due)}${asg(r).length?' · '+names(asg(r),1):''} · ${STI[stOf(r)]}</div></div>`).join(''):'<span class="meta">Nenhuma tarefa pendente 🎉</span>'}</div>`;
 }
 function list(){
@@ -521,7 +543,7 @@ function list(){
  </div>
  <div class="card list">${L.length?L.map(t=>{const un=(t.act||t.ts)>(sd[t.id]||0)&&t.author.uid!=S.user.uid||(t.act||t.ts)>(sd[t.id]||0)&&sd[t.id],f=fin(t),nf=Array.isArray(t.files)?t.files.length:0;
  return `<div class="row" onclick="go('t/${sid(t.id)}')">${un?'<span class="dot" title="Novidades"></span>':'<span style="width:9px"></span>'}${av(t.author)}<div><h3>${t.pinned?'📌 ':''}${e(t.title)}</h3>
- <div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${isRem(t)?' · '+STI[stOf(t)]+' '+STL[stOf(t)]:''}${asg(t).length?' · 👥 '+names(asg(t)):''}${!f&&t.ends?` · ⏳ até ${fmt(t.ends)}`:''}${nf?` · 📎 ${nf}`:''}${linksOf(t.id).length?` · 🔗 ${linksOf(t.id).length}`:''}${f?` · 📦 ${f.auto?'prazo encerrado':e(N(f.by))}, ${fmt(f.at)}`:''}</div></div>
+ <div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))}${roleT(t.author)} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${isRem(t)?' · '+STI[stOf(t)]+' '+STL[stOf(t)]:''}${asg(t).length?' · 👥 '+names(asg(t)):''}${!f&&t.ends?` · ⏳ até ${fmt(t.ends)}`:''}${nf?` · 📎 ${nf}`:''}${linksOf(t.id).length?` · 🔗 ${linksOf(t.id).length}`:''}${f?` · 📦 ${f.auto?'prazo encerrado':e(N(f.by))}, ${fmt(f.at)}`:''}</div></div>
  <div class="stats">${t.type=='poll'?'':`💬 ${cmts(t).length}`}</div></div>`}).join(''):'<div class="empty">Nada por aqui ainda.</div>'}</div>`;
 }
 /* ---------- Anexos (PDF e imagens) ----------
@@ -659,7 +681,7 @@ function readAll(){const b=db.batch();S.notifs.filter(n=>!n.read).forEach(n=>b.u
 function mentionsPanel(){
  const L=S.notifs,un=unread(),lab=n=>n.kind=='link'?'desdobrou um item seu em':n.kind=='status'?'atualizou o status da tarefa':n.kind=='assign'?'atribuiu a você a tarefa':n.kind=='all'?'mencionou @todos em':'mencionou você em';
  return `<h2 style="margin:0 0 4px">🔔 Menções</h2><p class="meta" style="margin:0 0 10px">Os lugares em que você foi mencionado(a) com @, as menções a @todos e as tarefas atribuídas a você. Clique para ir direto ao ponto.${un?` <button class="lnk" onclick="readAll()">Marcar todas como lidas</button>`:''}</p>
- <div class="card list">${L.length?L.map(n=>`<div class="row" onclick="openN('${sid(n.id)}')">${n.read?'<span style="width:9px;flex:none"></span>':'<span class="dot" title="Não lida"></span>'}${av(n.from)}<div style="min-width:0"><h3 style="font-weight:${n.read?400:700}">${e(N(n.from))} ${lab(n)} “${e(n.title)}”</h3>${n.text?`<div class="meta">${n.cid?'💬 ':''}${e(n.text)}</div>`:''}<div class="meta">${ago(n.ts)}</div></div></div>`).join(''):'<div class="empty">Nenhuma menção ainda.</div>'}</div>`;
+ <div class="card list">${L.length?L.map(n=>`<div class="row" onclick="openN('${sid(n.id)}')">${n.read?'<span style="width:9px;flex:none"></span>':'<span class="dot" title="Não lida"></span>'}${av(n.from)}<div style="min-width:0"><h3 style="font-weight:${n.read?400:700}">${e(N(n.from))}${roleT(n.from)} ${lab(n)} “${e(n.title)}”</h3>${n.text?`<div class="meta">${n.cid?'💬 ':''}${e(n.text)}</div>`:''}<div class="meta">${ago(n.ts)}</div></div></div>`).join(''):'<div class="empty">Nenhuma menção ainda.</div>'}</div>`;
 }
 /* ---------- Item aberto ---------- */
 const cmH=(c,i0)=>`<div class="cm" id="c-${sid(c.id)}">${av(c.author)}<div style="flex:1;min-width:0"><b>${e(N(c.author))}</b>${roleT(c.author)} <span class="meta">${ago(c.ts)}</span>
@@ -682,21 +704,21 @@ function detail(t){
   extra=`<p class="meta" style="margin:0 0 4px">${t.multi?'☑ Múltipla escolha: marque quantas opções quiser.':'◉ Escolha única: marque uma opção.'}${!off?' Clique de novo para desmarcar.':''}${!off&&t.ends?` ⏳ Encerra automaticamente em <b>${fmt(t.ends)}</b>.`:''}</p>`
    +opts.map((o,i)=>{const n=nm(i).length,me=mine.includes(i)||legV(o).some(x=>String(x).startsWith(u.uid+'|'));
     return `<button class="opt ${me?'me':''}" ${off?'disabled':''} onclick="vote('${i0}',${i})"><i style="width:${part?n/part*100:0}%"></i><span>${t.multi?(me?'☑ ':'☐ '):''}${e(o.t)}<b>${n} voto(s)</b></span></button>
-    ${n?`<div class="voters">${nm(i).map(v=>`<span class="who">${av(v,'sm')} ${e(N(v))}</span>`).join('')}</div>`:''}`}).join('')
+    ${n?`<div class="voters">${nm(i).map(v=>`<span class="who">${av(v,'sm')} ${e(N(v))}${roleT(v)}</span>`).join('')}</div>`:''}`}).join('')
    +`<div class="meta">${part} participante(s) · votação aberta: todos veem quem votou em cada opção.</div>`}
  if(isRem(t)){const A=asg(t),st=stOf(t);
   extra=`<p style="margin:6px 0">📅 Prazo: <b class="${!off&&t.due<today()?'due':''}">${fd(t.due)}</b></p>
-  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0">👥 Responsáveis: ${A.length?A.map(a=>`<span class="who">${av(a,'sm')} ${e(N(a))}</span>`).join(''):'<span class="meta">ninguém (o autor acompanha)</span>'}</div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0">👥 Responsáveis: ${A.length?A.map(a=>`<span class="who">${av(a,'sm')} ${e(N(a))}${roleT(a)}</span>`).join(''):'<span class="meta">ninguém (o autor acompanha)</span>'}</div>
   <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 4px"><b>Status:</b> ${canSt(t)?['todo','doing','done'].map(k=>`<button class="btn sm ${st==k?'':'ghost'}" onclick="setSt('${i0}','${k}')">${STI[k]} ${STL[k]}</button>`).join(''):stTag(t)}</div>
   ${!off&&!canSt(t)?`<p class="meta" style="margin:0">Só ${A.length?'os responsáveis atualizam':'o autor atualiza'} o status desta tarefa.</p>`:''}`}
  const note=f?(f.note||(t.type=='poll'&&f.auto?pollResult(t,S.votes):'')):'';
  const hl=[...legacyH(t),...S.hist].sort((a,b)=>a.ts-b.ts).reverse(),
-  hist=hl.map(h=>`<div class="h"><b>${e(typeof h.by=='string'?h.by:N(h.by))}</b> ${e(h.txt)} <span class="meta">· ${fmt(h.ts)}</span></div>`).join('');
+  hist=hl.map(h=>`<div class="h"><b>${e(typeof h.by=='string'?h.by:N(h.by))}</b>${typeof h.by=='string'?'':roleT(h.by)} ${e(h.txt)} <span class="meta">· ${fmt(h.ts)}</span></div>`).join('');
  const showC=t.type!='poll'||cm.length;
  return `<button class="btn ghost sm noprint" onclick="go('')">← Voltar</button>
  <div class="card" style="margin-top:12px"><div style="display:flex;gap:12px;align-items:center">${av(t.author)}<div>${TYPES[t.type]||''}<div class="meta">${e(N(t.author))}${roleT(t.author)} · ${fmt(t.ts)}</div></div></div>
  <h2>${t.pinned?'📌 ':''}${e(t.title)}</h2>
- ${off?`<div class="banner">📦 ${f.auto?`Enquete encerrada automaticamente ao fim do prazo (${fmt(t.ends||f.at)})`:`Encerrado e arquivado por <b>${e(N(f.by))}</b> em ${fmt(f.at)}`}${note?`<br><b>Conclusão:</b> ${rich(note)}`:''}</div>`:''}
+ ${off?`<div class="banner">📦 ${f.auto?`Enquete encerrada automaticamente ao fim do prazo (${fmt(t.ends||f.at)})`:`Encerrado e arquivado por <b>${e(N(f.by))}</b>${roleT(f.by)} em ${fmt(f.at)}`}${note?`<br><b>Conclusão:</b> ${rich(note)}`:''}</div>`:''}
  <div class="body">${rich(t.body)}</div>${atts(t.files)}${extra}
  <div class="noprint" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
  ${isAdmin()&&!off?`<button class="btn ghost sm" onclick="pin('${i0}')">${t.pinned?'Desafixar':'📌 Fixar'}</button>`:''}
@@ -945,13 +967,6 @@ async function delMe(){
  }catch(x){dying=false;btn.disabled=false;showErr('Não foi possível concluir a exclusão: '+msg(x));if(au.currentUser)enter(au.currentUser,(au.currentUser.email||'').split('@')[0])}
 }
 
-/* ---------- Diretoria: quem é quem ---------- */
-function board(){
- const ix=r=>{const i=ROLES.indexOf(r);return r?(i<0?ROLES.length:i):ROLES.length+1};
- const L=dir().sort((a,b)=>ix(R({uid:a[0]}))-ix(R({uid:b[0]}))||a[1].localeCompare(b[1],'pt-BR'));
- return `<h2 style="margin:0 0 4px">🏛 Diretoria</h2><p class="meta" style="margin:0 0 10px">Quem é quem: nome e cargo de cada pessoa com acesso ao portal. Para indicar ou mudar o seu cargo, clique na sua foto ou no seu nome, no alto da página.</p>
- <div class="card list">${L.length?L.map(([id,n])=>`<div class="row" style="cursor:default">${av({uid:id,name:n})}<div><h3>${e(n)}${id==S.user.uid?' <span class="meta">(você)</span>':''}</h3><div class="meta">${R({uid:id})?`<b style="color:var(--gt)">${e(R({uid:id}))}</b>`:'<i>cargo não informado</i>'}</div></div>${id==S.user.uid?'<button class="btn ghost sm" style="margin-left:auto" onclick="profile()">Editar</button>':''}</div>`).join(''):'<div class="empty">Ninguém ainda.</div>'}</div>`;
-}
 
 /* ---------- Vínculos entre itens ----------
    Qualquer item pode ser desdobrado em qualquer tipo (tópico, enquete ou tarefa), aberto ou encerrado,
