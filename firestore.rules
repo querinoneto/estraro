@@ -61,23 +61,28 @@ service cloud.firestore {
         || (signedIn() && request.auth.uid == uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
           && validName(request.resource.data.name));
-      allow delete: if isAdmin();
+      // Excluir: o admin ou a própria pessoa (exclusão da conta)
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
     }
 
     // ---------- Aprovação por e-mail ----------
     match /allowed/{email} {
       allow read: if isAdmin() || (signedIn() && myEmail() == email);
-      allow write: if isAdmin();
+      allow create, update: if isAdmin();
+      // Excluir: o admin ou a própria pessoa (exclusão da conta)
+      allow delete: if isAdmin() || (signedIn() && myEmail() == email);
     }
 
-    // ---------- Diretório de pessoas com acesso (nome atual; usado em menções e tarefas) ----------
+    // ---------- Diretório de pessoas com acesso (nome e cargo atuais; usado em menções e tarefas) ----------
     match /people/{uid} {
       allow read: if approved();
       allow create, update: if approved() && (request.auth.uid == uid || isAdmin())
-        && request.resource.data.keys().hasOnly(['name', 'ts'])
+        && request.resource.data.keys().hasOnly(['name', 'role', 'ts'])
         && validName(request.resource.data.name)
+        && (!('role' in request.resource.data)
+            || (request.resource.data.role is string && request.resource.data.role.size() <= 60))
         && request.resource.data.ts == request.time;
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
     }
 
     // ---------- Fotos de perfil ----------
@@ -89,7 +94,7 @@ service cloud.firestore {
         && request.resource.data.img.size() < 200000
         && request.resource.data.img.matches('data:image/jpeg;base64,[A-Za-z0-9+/=]+')
         && request.resource.data.ts == request.time;
-      allow delete: if approved() && (request.auth.uid == uid || isAdmin());
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
     }
 
     // ---------- Notificações (menções, @todos e tarefas atribuídas) ----------
@@ -102,7 +107,7 @@ service cloud.firestore {
       // Qualquer pessoa com acesso pode notificar outra, sempre em seu próprio nome
       allow create: if approved()
         && request.resource.data.keys().hasOnly(['kind', 'from', 'tid', 'cid', 'title', 'text', 'ts', 'read'])
-        && request.resource.data.kind in ['mention', 'all', 'assign', 'status']
+        && request.resource.data.kind in ['mention', 'all', 'assign', 'status', 'link']
         && isMe(request.resource.data.from)
         && request.resource.data.tid is string
         && (request.resource.data.cid == null || request.resource.data.cid is string)
@@ -135,6 +140,31 @@ service cloud.firestore {
         allow update: if false;
         allow delete: if isAdmin();
       }
+    }
+
+    // ---------- Vínculos entre itens ----------
+    // "from": item b é desdobramento do item a; "rel": itens relacionados.
+    // Desfazer: o admin, ou quem criou um vínculo "rel".
+    match /links/{lid} {
+      allow read: if approved();
+      allow create: if approved()
+        && request.resource.data.keys().hasOnly(['a', 'b', 'kind', 'by', 'ts'])
+        && request.resource.data.a is string && request.resource.data.b is string
+        && request.resource.data.a != request.resource.data.b
+        && request.resource.data.kind in ['from', 'rel']
+        && isMe(request.resource.data.by)
+        && request.resource.data.ts == request.time
+        && exists(/databases/$(database)/documents/topics/$(request.resource.data.a))
+        && existsAfter(/databases/$(database)/documents/topics/$(request.resource.data.b));
+      allow update: if false;
+      allow delete: if isAdmin()
+        || (approved() && resource.data.kind == 'rel' && resource.data.by.uid == request.auth.uid);
+    }
+
+    // ---------- Bloco de anotações (individual) ----------
+    // Anotações e PDFs em notes/{uid}/...: só a própria pessoa lê e grava. Nem o admin acessa pelo portal.
+    match /notes/{uid}/{rest=**} {
+      allow read, write: if verified() && request.auth.uid == uid;
     }
 
     // ---------- Comentários (leitura por consulta de grupo de coleções) ----------

@@ -18,9 +18,10 @@ CONFIGURAÇÃO (objeto CONFIG no início do script):
 7. O administrador (CONFIG.admins) deve criar a conta e confirmar o e-mail pelo link recebido.
    TODOS os cadastros precisam confirmar o e-mail; os não-admin também ficam "aguardando aprovação" até o administrador liberar em 👥 Cadastros.
    A aprovação vale por e-mail (coleção "allowed"): a mesma pessoa nunca precisa ser aprovada duas vezes.
-8. Fotos de perfil (coleção "avatars"), diretório de pessoas ("people"), menções/notificações ("notifs")
-   e anexos em PDF/imagem ("files", guardados em pedaços no próprio Firestore — não precisa do Firebase Storage).
-   Tudo isso já está coberto pelo firestore.rules: basta colar e publicar a versão mais recente.
+8. Coleções usadas: "avatars" (fotos), "people" (diretório com nome e cargo), "notifs" (menções e avisos),
+   "files" (anexos em PDF/imagem, em pedaços no próprio Firestore), "links" (vínculos entre itens) e
+   "notes" (bloco de anotações individual: só a própria pessoa lê). Tudo está coberto pelo firestore.rules:
+   basta colar e publicar a versão mais recente.
 -->
 <style>
 :root{color-scheme:light;--g:#02b05c;--gt:#027a3f;--on:#fff;--gd:#029a50;--gl:#e9f8f0;--bg:#fff;--card:#fff;--tx:#1d2b24;--mu:#5c6e64;--bd:#d3e5d9;--red:#b42318}
@@ -65,6 +66,12 @@ button.thumb{background:none;border:0;padding:0;cursor:pointer}button.thumb img{
 .st-doing{background:#e6efff;color:#1d4ed8}.st-done{background:var(--gl);color:var(--gt)}
 .voters{display:flex;flex-wrap:wrap;gap:6px;margin:-2px 0 8px 4px}
 button.nm{text-decoration:none;color:var(--tx);font-size:14px}button.nm:hover{text-decoration:underline}
+.role{font-size:11px;font-weight:700;color:var(--gt);background:var(--gl);border-radius:10px;padding:1px 8px;margin-left:4px;white-space:nowrap;vertical-align:middle}
+.banner.priv{border-left-color:#6b7280;background:#f3f4f6}
+.lk{padding:7px 0;border-bottom:1px solid var(--bd)}.lk .lnk{font-size:15px;text-decoration:none;font-weight:600;text-align:left}
+.lka{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
+.row.on{background:var(--gl)}
+details.dz{margin-top:16px;text-align:left;border-top:1px solid var(--bd);padding-top:10px}details.dz summary{cursor:pointer;color:var(--red);font-size:14px}
 .removed{color:var(--mu);font-style:italic;margin:2px 0}
 .wrap{max-width:1080px;margin:20px auto;padding:0 16px;display:grid;grid-template-columns:240px 1fr;gap:20px}
 aside .box,.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:14px}
@@ -145,7 +152,7 @@ const CONFIG={
 /* "reminder" é o nome interno das tarefas (mantido para os itens já existentes continuarem funcionando) */
 const TYPES={topic:'💬 Tópico',poll:'📊 Enquete',reminder:'📋 Tarefa'};
 const VIEWS={andamento:'📂 Em andamento',encerrados:'📦 Encerrados'};
-const S={user:null,avatars:{},people:{},pl:false,notifs:[],topics:[],comments:{},votes:[],hist:[],view:'andamento',q:'',type:'all',sort:'act',auth:'in',fail:'',users:[],allowed:{},cur:null,draft:null,focus:null,busy:false,catt:{tid:null,list:[]},natt:[]};
+const S={user:null,avatars:{},people:{},links:[],notes:[],ned:null,origin:null,lp:null,pl:false,notifs:[],topics:[],comments:{},votes:[],hist:[],view:'andamento',q:'',type:'all',sort:'act',auth:'in',fail:'',users:[],allowed:{},cur:null,draft:null,focus:null,busy:false,catt:{tid:null,list:[]},natt:[]};
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const reEsc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const fold=s=>String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
@@ -176,6 +183,10 @@ const N=u=>(u&&u.uid&&S.people[u.uid]&&S.people[u.uid].name)||(u&&u.name)||'';
 const IMG=/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/;
 const av=(u,c)=>{const id=u&&(u.uid||u.id),p=id&&S.avatars[id],k='av'+(c?' '+c:'');
  return p?`<span class="${k}"><img src="${p}" alt="" loading="lazy"></span>`:`<span class="${k}">${e((N(u)||'?')[0].toUpperCase())}</span>`};
+/* Cargo na Diretoria (informado pela própria pessoa em "Meu perfil") */
+const R=u=>{const id=u&&(u.uid||u.id);return(id&&S.people[id]&&S.people[id].role)||''};
+const roleT=u=>{const r=R(u);return r?` <span class="role">${e(r)}</span>`:''};
+const ROLES=['Presidente','Vice-presidente','Secretário(a)-geral','1º(ª) Secretário(a)','2º(ª) Secretário(a)','Tesoureiro(a)','1º(ª) Tesoureiro(a)','2º(ª) Tesoureiro(a)','Diretor(a) de Comunicação','Diretor(a) de Eventos','Diretor(a) de Ensino','Diretor(a) de Relações Internacionais','Diretor(a) Jurídico(a)','Conselheiro(a) Fiscal','Membro da Diretoria'];
 $('hl').src=LOGO;
 const seen=()=>{try{return JSON.parse(localStorage['seen_'+S.user.uid]||'{}')||{}}catch(x){return{}}};
 
@@ -188,7 +199,7 @@ if(typeof firebase==='undefined'||!CONFIG.firebase){
 firebase.initializeApp(CONFIG.firebase);
 const db=firebase.firestore(),col=db.collection('topics'),au=firebase.auth(),TS=()=>firebase.firestore.FieldValue.serverTimestamp();
 au.languageCode='pt-BR';
-let subs=[],unsubU=null,unsubP=null,unsubA=null,reg=false,wid=null,wun=[],wroteName=null;
+let dying=false,subs=[],unsubU=null,unsubP=null,unsubA=null,reg=false,wid=null,wun=[],wroteName=null;
 const saveFail=x=>alert('Não foi possível salvar: '+((x&&x.code=='permission-denied')?'sem permissão (verifique as regras do Firestore e se o item ainda está aberto).':((x&&x.message)||x)));
 const readFail=x=>{S.fail=x&&x.code=='permission-denied'?'Sem permissão para ler os dados. Verifique se o Firestore foi criado e se as regras foram publicadas.':'Falha ao carregar os dados: '+((x&&x.message)||x);render()};
 /* Datas vêm do servidor (Timestamp); aqui viram milissegundos */
@@ -204,7 +215,11 @@ const store={
    /* Fotos de perfil: só entram imagens JPEG em data URL válidas (nada de HTML ou outros esquemas) */
    db.collection('avatars').onSnapshot(s=>{const m={};s.docs.forEach(d=>{const x=d.data().img;if(typeof x=='string'&&IMG.test(x))m[d.id]=x});S.avatars=m;render()},()=>{}),
    /* Diretório de pessoas com acesso: usado para atribuir tarefas, mencionar e mostrar o nome atual */
-   db.collection('people').onSnapshot(s=>{const m={};s.docs.forEach(d=>{const n=d.data().name;if(typeof n=='string'&&n)m[d.id]={name:n}});S.people=m;S.pl=true;syncMe();syncPeople();render()},()=>{}),
+   db.collection('people').onSnapshot(s=>{const m={};s.docs.forEach(d=>{const x=d.data(),n=x.name;if(typeof n=='string'&&n)m[d.id]={name:n,role:typeof x.role=='string'?x.role.slice(0,60):''}});S.people=m;S.pl=true;syncMe();syncPeople();render()},()=>{}),
+   /* Vínculos entre itens (desdobramentos e itens relacionados) */
+   db.collection('links').onSnapshot(s=>{S.links=s.docs.map(dat);render()},()=>{}),
+   /* Bloco de anotações: só a própria pessoa lê (garantido pelas regras) */
+   noteBase().collection('items').orderBy('upd','desc').onSnapshot(s=>{S.notes=s.docs.map(d=>{const x=dat(d);x.upd=ms(x.upd);x.ts=ms(x.ts);return x});render()},()=>{}),
    notifCol(S.user.uid).orderBy('ts','desc').limit(100).onSnapshot(s=>{S.notifs=s.docs.map(d=>{const x=dat(d);x.ts=ms(x.ts);return x});render()},()=>{}),
    col.onSnapshot(s=>{S.fail='';S.topics=s.docs.map(normT);autoClose();render()},readFail),
    db.collectionGroup('comments').onSnapshot(s=>{
@@ -234,12 +249,12 @@ const store={
   return b.commit().catch(x=>{if(!quiet)saveFail(x)})}
 };
 const stopData=()=>{subs.forEach(f=>f());subs=[];unsubU&&unsubU();unsubU=null;store.watch(null);
- S.avatars={};S.people={};S.pl=false;S.ul=false;S.notifs=[];S.topics=[];S.comments={};S.users=[];S.allowed={}};
+ S.avatars={};S.people={};S.links=[];S.notes=[];S.ned=null;S.pl=false;S.ul=false;S.notifs=[];S.topics=[];S.comments={};S.users=[];S.allowed={}};
 /* Mantém o próprio nome no diretório de pessoas */
 function syncMe(){const u=S.user;if(!u||u.status!='ok'||!S.pl)return;const p=S.people[u.uid];
  if(p&&p.name===u.name){wroteName=u.name;return}
  if(wroteName===u.name)return;wroteName=u.name;
- db.collection('people').doc(u.uid).set({name:u.name,ts:TS()}).catch(()=>{wroteName=null})}
+ db.collection('people').doc(u.uid).set({name:u.name,ts:TS()},{merge:true}).catch(()=>{wroteName=null})}
 /* O admin mantém o diretório em dia: inclui quem tem acesso e retira quem foi recusado ou revogado */
 const psync=new Set();
 function syncPeople(){
@@ -258,7 +273,7 @@ function enter(u,name){
  unsubP&&unsubP();unsubA&&unsubA();
  const email=(u.email||'').toLowerCase();let p=null,a=null,gotP=false,gotA=false,created=false;
  const apply=async()=>{
-  if(!gotP||!gotA)return;
+  if(dying||!gotP||!gotA)return;
   if(!p&&!isAdm(email)&&!created){created=true;try{await db.collection('users').doc(u.uid).set({name,email,created:Date.now(),approved:false})}catch(x){}return}
   const st=statusOf(email,u.emailVerified,p,a),was=S.user&&S.user.uid==u.uid&&S.user.status=='ok';
   S.user={uid:u.uid,name:(p&&p.name)||name,email,verified:u.emailVerified,status:st};
@@ -332,6 +347,7 @@ const unread=()=>S.notifs.filter(n=>!n.read).length;
 function render(){
  const ok=!!(S.user&&S.user.status=='ok');
  const o=$('ct');if(o&&S.cur)S.draft={id:S.cur,v:o.value,f:document.activeElement===o};
+ const xt=$('xt');if(xt&&S.ned){const a=document.activeElement;S.ned.t=xt.value;S.ned.b=$('xb').value;S.ned.f=a&&(a.id=='xt'||a.id=='xb')?a.id:null;S.ned.ss=S.ned.f?a.selectionStart:null}
  document.body.classList.toggle('anon',!ok);
  if(S.view=='cadastros'&&!isAdmin())S.view='andamento';
  $('q').style.display=ok?'':'none';
@@ -366,10 +382,11 @@ function render(){
  S.cur=t?t.id:null;
  if(t&&S.catt.tid&&S.catt.tid!==t.id)S.catt={tid:null,list:[]};
  if(t){const s=seen();s[t.id]=t.act||t.ts;try{localStorage['seen_'+S.user.uid]=JSON.stringify(s)}catch(x){}readFor(t.id)}
- $('app').innerHTML=`<div class="wrap"><aside>${side()}</aside><main>${t?detail(t):(S.view=='cadastros'&&isAdmin()?usersPanel():S.view=='mencoes'?mentionsPanel():S.view=='minhas'?myTasks():list())}</main></div>`;
+ $('app').innerHTML=`<div class="wrap"><aside>${side()}</aside><main>${t?detail(t):(S.view=='cadastros'&&isAdmin()?usersPanel():S.view=='mencoes'?mentionsPanel():S.view=='minhas'?myTasks():S.view=='bloco'?notebook():S.view=='diretoria'?board():list())}</main></div>`;
  /* mantém o comentário que estava sendo digitado quando chegam atualizações em tempo real */
  const c=$('ct');
  if(c&&S.draft&&S.draft.id==S.cur){c.value=S.draft.v;if(S.draft.f){c.focus();c.setSelectionRange(c.value.length,c.value.length)}}
+ if(S.ned&&S.ned.f&&$(S.ned.f)){const x=$(S.ned.f),q=S.ned.ss!=null?S.ned.ss:x.value.length;x.focus();try{x.setSelectionRange(q,q)}catch(_){}}
  /* vindo de uma menção: rola até o comentário e o destaca */
  if(t&&S.focus){const f=S.focus;S.focus=null;setTimeout(()=>{const x=$('c-'+sid(f));if(x){x.scrollIntoView({block:'center'});x.classList.add('flash')}},60)}
 }
@@ -409,7 +426,7 @@ async function delUser(k){
  }catch(x){saveFail(x)}
 }
 function usersPanel(){
- const row=(g,btns)=>`<div class="row urow" style="cursor:default">${av({name:g.name,uid:(g.docs.find(d=>S.avatars[d.id])||g.docs[0]||{}).id})}<div style="flex:1;min-width:150px"><h3>${e(g.name)}</h3><div class="meta" style="word-break:break-all">${e(g.email)}${g.created?' · cadastro em '+fmt(g.created):''}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap">${btns}</div></div>`;
+ const row=(g,btns)=>`<div class="row urow" style="cursor:default">${av({name:g.name,uid:(g.docs.find(d=>S.avatars[d.id])||g.docs[0]||{}).id})}<div style="flex:1;min-width:150px"><h3>${e(g.name)}${roleT({uid:(g.docs.find(d=>S.people[d.id])||g.docs[0]||{}).id})}</h3><div class="meta" style="word-break:break-all">${e(g.email)}${g.created?' · cadastro em '+fmt(g.created):''}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap">${btns}</div></div>`;
  const sec=(t,L,fn,empty)=>`<h3 style="margin:18px 0 8px">${t} <span class="meta">(${L.length})</span></h3><div class="card list">${L.length?L.map(fn).join(''):`<div class="empty" style="padding:18px">${empty}</div>`}</div>`;
  const k=g=>ek(g.email),rej=groups().filter(g=>g.status=='rejected'),
   delB=g=>`<button class="btn ghost sm danger" title="Excluir cadastro" onclick="delUser('${k(g)}')">🗑 Excluir</button>`;
@@ -425,7 +442,7 @@ function gate(){
   <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn" onclick="auth.refresh().catch(x=>alert(msg(x)))">Já confirmei</button><button class="btn ghost" onclick="auth.resend().then(()=>alert('E-mail reenviado.')).catch(x=>alert(msg(x)))">Reenviar e-mail</button>${out}</div>`
  :st=='rejected'?`<h2 style="margin-top:0">Cadastro não aprovado</h2><p>Seu acesso não foi liberado. Em caso de dúvida, fale com a diretoria.</p>${out}`
  :`<h2 style="margin-top:0">Aguardando aprovação</h2><p>Olá, ${first}! Sua conta foi criada, mas um administrador precisa aprová-la antes de você acessar o portal. Esta página atualiza sozinha assim que isso acontecer.</p>${out}`;
- $('app').innerHTML=`<div class="hero"><img src="${LOGO}" alt="Liga Brasileira de Esperanto" style="width:min(260px,70%)"><div class="card auth" style="text-align:center;margin-top:20px">${h}</div></div>`;
+  $('app').innerHTML=`<div class="hero"><img src="${LOGO}" alt="Liga Brasileira de Esperanto" style="width:min(260px,70%)"><div class="card auth" style="text-align:center;margin-top:20px">${h}${isAdm(u.email)?'':'<p style="margin:16px 0 0"><button class="lnk danger" onclick="delAccount()">Excluir minha conta</button></p>'}</div></div>`;
 }
 /* ---------- Enquetes: votos, apuração e encerramento automático ---------- */
 /* Votos novos guardam a lista "opts"; os antigos guardavam um único "opt" */
@@ -491,7 +508,7 @@ const inView=(t,v)=>v=='encerrados'?arch(t):!arch(t);
 function side(){
  const rem=S.topics.filter(t=>isRem(t)&&!arch(t)&&t.due).sort((a,b)=>a.due>b.due?1:-1).slice(0,4),un=unread();
  return `<button class="btn newbtn" style="width:100%;margin-bottom:14px" onclick="compose()">＋ Novo</button>
- <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}<button class="cat ${S.view=='minhas'?'on':''}" onclick="S.view='minhas';go('')">📋 Minhas tarefas${myOpen()?`<span class="tag">${myOpen()}</span>`:''}</button><button class="cat ${S.view=='mencoes'?'on':''}" onclick="S.view='mencoes';go('')">🔔 Menções${un?`<span class="tag">${un} nova(s)</span>`:''}</button>${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pendU().length?`<span class="tag">${pendU().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
+ <div class="box nav-box"><h4>Navegar</h4>${Object.entries(VIEWS).map(([k,v])=>`<button class="cat ${S.view==k?'on':''}" onclick="S.view='${k}';go('')">${v}<span class="meta">${S.topics.filter(t=>inView(t,k)).length}</span></button>`).join('')}<button class="cat ${S.view=='minhas'?'on':''}" onclick="S.view='minhas';go('')">📋 Minhas tarefas${myOpen()?`<span class="tag">${myOpen()}</span>`:''}</button><button class="cat ${S.view=='mencoes'?'on':''}" onclick="S.view='mencoes';go('')">🔔 Menções${un?`<span class="tag">${un} nova(s)</span>`:''}</button><button class="cat ${S.view=='bloco'?'on':''}" onclick="S.view='bloco';go('')">📓 Bloco de anotações<span class="meta">🔒</span></button><button class="cat ${S.view=='diretoria'?'on':''}" onclick="S.view='diretoria';go('')">🏛 Diretoria<span class="meta">${Object.keys(S.people).length}</span></button>${isAdmin()?`<button class="cat ${S.view=='cadastros'?'on':''}" onclick="S.view='cadastros';go('')">👥 Cadastros${pendU().length?`<span class="tag">${pendU().length} novo(s)</span>`:`<span class="meta">${members().length}</span>`}</button>`:''}</div>
  <div class="box rem-box"><h4>📋 Próximos prazos</h4>${rem.length?rem.map(r=>`<div style="margin:6px 0;cursor:pointer" onclick="go('t/${sid(r.id)}')"><b>${e(r.title)}</b><div class="meta ${r.due<today()?'due':''}">${r.due<today()?'Vencida · ':''}${fd(r.due)}${asg(r).length?' · '+names(asg(r),1):''} · ${STI[stOf(r)]}</div></div>`).join(''):'<span class="meta">Nenhuma tarefa pendente 🎉</span>'}</div>`;
 }
 function list(){
@@ -504,7 +521,7 @@ function list(){
  </div>
  <div class="card list">${L.length?L.map(t=>{const un=(t.act||t.ts)>(sd[t.id]||0)&&t.author.uid!=S.user.uid||(t.act||t.ts)>(sd[t.id]||0)&&sd[t.id],f=fin(t),nf=Array.isArray(t.files)?t.files.length:0;
  return `<div class="row" onclick="go('t/${sid(t.id)}')">${un?'<span class="dot" title="Novidades"></span>':'<span style="width:9px"></span>'}${av(t.author)}<div><h3>${t.pinned?'📌 ':''}${e(t.title)}</h3>
- <div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${isRem(t)?' · '+STI[stOf(t)]+' '+STL[stOf(t)]:''}${asg(t).length?' · 👥 '+names(asg(t)):''}${!f&&t.ends?` · ⏳ até ${fmt(t.ends)}`:''}${nf?` · 📎 ${nf}`:''}${f?` · 📦 ${f.auto?'prazo encerrado':e(N(f.by))}, ${fmt(f.at)}`:''}</div></div>
+ <div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))} · ${ago(t.ts)}${t.due?` · prazo <span class="${!f&&t.due<today()?'due':''}">${fd(t.due)}</span>`:''}${isRem(t)?' · '+STI[stOf(t)]+' '+STL[stOf(t)]:''}${asg(t).length?' · 👥 '+names(asg(t)):''}${!f&&t.ends?` · ⏳ até ${fmt(t.ends)}`:''}${nf?` · 📎 ${nf}`:''}${linksOf(t.id).length?` · 🔗 ${linksOf(t.id).length}`:''}${f?` · 📦 ${f.auto?'prazo encerrado':e(N(f.by))}, ${fmt(f.at)}`:''}</div></div>
  <div class="stats">${t.type=='poll'?'':`💬 ${cmts(t).length}`}</div></div>`}).join(''):'<div class="empty">Nada por aqui ainda.</div>'}</div>`;
 }
 /* ---------- Anexos (PDF e imagens) ----------
@@ -546,31 +563,33 @@ async function pick(inp,w){
 const unpick=(w,k)=>{(w=='nb'?S.natt:S.catt.list).splice(k,1);w=='nb'?drawNatt():render()};
 const drawNatt=()=>{const x=$('natt');if(x)x.innerHTML=chips(S.natt,'nb')};
 const b64=blob=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]||'');r.onerror=()=>no(r.error);r.readAsDataURL(blob)});
-async function upFile(f){
- const d=await b64(f.blob),n=Math.max(1,Math.ceil(d.length/CH)),ref=db.collection('files').doc(),name=String(f.name).slice(0,200);
+const fbase=sc=>sc=='n'?noteBase().collection('files'):db.collection('files');
+async function upFile(f,sc){
+ const d=await b64(f.blob),n=Math.max(1,Math.ceil(d.length/CH)),ref=fbase(sc).doc(),name=String(f.name).slice(0,200);
  await ref.set({name,type:f.type,size:f.size,owner:S.user.uid,n,ts:TS()});
  await Promise.all(Array.from({length:n},(_,k)=>ref.collection('chunks').doc(String(k)).set({d:d.slice(k*CH,(k+1)*CH)})));
  const o={id:ref.id,name,type:f.type,size:f.size};if(f.thumb)o.thumb=f.thumb;return o;
 }
-const upAll=L=>Promise.all((L||[]).map(upFile));
+const upAll=L=>Promise.all((L||[]).map(f=>upFile(f)));
 const fcache={};
-async function openFile(id,k){
+async function openFile(id,k,sc){
  const w=window.open('','_blank');
  try{w&&(w.document.title='Carregando…',w.document.body.textContent='Carregando anexo…')}catch(x){}
  try{
-  let u=fcache[id];
+  let u=fcache[(sc||'')+id];
   if(!u){
-   const s=await db.collection('files').doc(id).collection('chunks').get();
+   const s=await fbase(sc).doc(id).collection('chunks').get();
    const d=s.docs.slice().sort((a,b)=>+a.id-+b.id).map(x=>x.data().d||'').join(''),bin=atob(d),a=new Uint8Array(bin.length);
    for(let j=0;j<bin.length;j++)a[j]=bin.charCodeAt(j);
-   u=fcache[id]=URL.createObjectURL(new Blob([a],{type:k=='p'?'application/pdf':'image/jpeg'}));
+   u=fcache[(sc||'')+id]=URL.createObjectURL(new Blob([a],{type:k=='p'?'application/pdf':'image/jpeg'}));
   }
   if(w)w.location.href=u;else{const a=document.createElement('a');a.href=u;a.download=k=='p'?'anexo.pdf':'imagem.jpg';a.click()}
  }catch(x){try{w&&w.close()}catch(y){}alert('Não foi possível abrir o anexo: '+((x&&x.message)||x))}
 }
-async function rmFiles(L){
+async function delDocs(docs){for(let i=0;i<docs.length;i+=400){const b=db.batch();docs.slice(i,i+400).forEach(d=>b.delete(d.ref));await b.commit()}}
+async function rmFiles(L,sc){
  for(const f of (Array.isArray(L)?L:[])){const id=sid(f&&f.id);if(!id)continue;
-  try{const r=db.collection('files').doc(id),s=await r.collection('chunks').get(),b=db.batch();s.docs.forEach(d=>b.delete(d.ref));b.delete(r);await b.commit()}catch(x){}}
+  try{const r=fbase(sc).doc(id),s=await r.collection('chunks').get(),b=db.batch();s.docs.forEach(d=>b.delete(d.ref));b.delete(r);await b.commit()}catch(x){}}
 }
 /* ---------- Menções e notificações ---------- */
 let mst=null;
@@ -579,7 +598,7 @@ function mq(el){
  if(!m)return mclose();
  const q=fold(m[2]),L=[];
  if('todos'.startsWith(q))L.push({n:'todos',d:'notifica todas as pessoas cadastradas'});
- dir().forEach(([id,n])=>{if(id!=S.user.uid&&fold(n).includes(q))L.push({id,n})});
+ dir().forEach(([id,n])=>{if(id!=S.user.uid&&fold(n).includes(q))L.push({id,n,d:R({uid:id})})});
  if(!L.length)return mclose();
  mst={id:el.id,s:p-m[2].length-1,e:p,list:L.slice(0,8),k:0};mdraw();
 }
@@ -638,12 +657,12 @@ function openN(id){
 }
 function readAll(){const b=db.batch();S.notifs.filter(n=>!n.read).forEach(n=>b.update(notifCol(S.user.uid).doc(n.id),{read:true}));b.commit().catch(saveFail)}
 function mentionsPanel(){
- const L=S.notifs,un=unread(),lab=n=>n.kind=='status'?'atualizou o status da tarefa':n.kind=='assign'?'atribuiu a você a tarefa':n.kind=='all'?'mencionou @todos em':'mencionou você em';
+ const L=S.notifs,un=unread(),lab=n=>n.kind=='link'?'desdobrou um item seu em':n.kind=='status'?'atualizou o status da tarefa':n.kind=='assign'?'atribuiu a você a tarefa':n.kind=='all'?'mencionou @todos em':'mencionou você em';
  return `<h2 style="margin:0 0 4px">🔔 Menções</h2><p class="meta" style="margin:0 0 10px">Os lugares em que você foi mencionado(a) com @, as menções a @todos e as tarefas atribuídas a você. Clique para ir direto ao ponto.${un?` <button class="lnk" onclick="readAll()">Marcar todas como lidas</button>`:''}</p>
  <div class="card list">${L.length?L.map(n=>`<div class="row" onclick="openN('${sid(n.id)}')">${n.read?'<span style="width:9px;flex:none"></span>':'<span class="dot" title="Não lida"></span>'}${av(n.from)}<div style="min-width:0"><h3 style="font-weight:${n.read?400:700}">${e(N(n.from))} ${lab(n)} “${e(n.title)}”</h3>${n.text?`<div class="meta">${n.cid?'💬 ':''}${e(n.text)}</div>`:''}<div class="meta">${ago(n.ts)}</div></div></div>`).join(''):'<div class="empty">Nenhuma menção ainda.</div>'}</div>`;
 }
 /* ---------- Item aberto ---------- */
-const cmH=(c,i0)=>`<div class="cm" id="c-${sid(c.id)}">${av(c.author)}<div style="flex:1;min-width:0"><b>${e(N(c.author))}</b> <span class="meta">${ago(c.ts)}</span>
+const cmH=(c,i0)=>`<div class="cm" id="c-${sid(c.id)}">${av(c.author)}<div style="flex:1;min-width:0"><b>${e(N(c.author))}</b>${roleT(c.author)} <span class="meta">${ago(c.ts)}</span>
  ${c.removed?'<div class="removed">🚫 Comentário removido pelo administrador.</div>':`<div class="body" style="margin:2px 0">${rich(c.text)}</div>${atts(c.files)}`}</div>
  ${isAdmin()&&!c.removed&&!c.legacy&&c.id?`<button class="btn ghost sm danger noprint" title="Remover comentário (administrador)" onclick="delC('${i0}','${sid(c.id)}')">✕</button>`:''}</div>`;
 const composerC=i0=>{const L=S.catt.tid==S.cur?S.catt.list:[];
@@ -675,7 +694,7 @@ function detail(t){
   hist=hl.map(h=>`<div class="h"><b>${e(typeof h.by=='string'?h.by:N(h.by))}</b> ${e(h.txt)} <span class="meta">· ${fmt(h.ts)}</span></div>`).join('');
  const showC=t.type!='poll'||cm.length;
  return `<button class="btn ghost sm noprint" onclick="go('')">← Voltar</button>
- <div class="card" style="margin-top:12px"><div style="display:flex;gap:12px;align-items:center">${av(t.author)}<div>${TYPES[t.type]||''}<div class="meta">${e(N(t.author))} · ${fmt(t.ts)}</div></div></div>
+ <div class="card" style="margin-top:12px"><div style="display:flex;gap:12px;align-items:center">${av(t.author)}<div>${TYPES[t.type]||''}<div class="meta">${e(N(t.author))}${roleT(t.author)} · ${fmt(t.ts)}</div></div></div>
  <h2>${t.pinned?'📌 ':''}${e(t.title)}</h2>
  ${off?`<div class="banner">📦 ${f.auto?`Enquete encerrada automaticamente ao fim do prazo (${fmt(t.ends||f.at)})`:`Encerrado e arquivado por <b>${e(N(f.by))}</b> em ${fmt(f.at)}`}${note?`<br><b>Conclusão:</b> ${rich(note)}`:''}</div>`:''}
  <div class="body">${rich(t.body)}</div>${atts(t.files)}${extra}
@@ -683,6 +702,7 @@ function detail(t){
  ${isAdmin()&&!off?`<button class="btn ghost sm" onclick="pin('${i0}')">${t.pinned?'Desafixar':'📌 Fixar'}</button>`:''}
  ${can&&!off?`<button class="btn ghost sm" onclick="archive('${i0}')">📦 Encerrar</button>`:''}
  ${isAdmin()?`<button class="btn ghost sm danger" onclick="del('${i0}')">Apagar</button>`:''}</div></div>
+ ${linksCard(t)}
  ${showC?`<div class="card"><b>${cm.length} comentário(s)</b>${cm.map(c=>cmH(c,i0)).join('')}
  ${t.type=='poll'?'<p class="meta">💬 Enquetes não recebem comentários.</p>':off?'<p class="meta">🔒 Item encerrado: comentários desativados.</p>':composerC(i0)}</div>`:''}
  <details class="card"><summary><b>🕘 Histórico (${hl.length})</b></summary><div style="margin-top:10px">${hist||'<span class="meta">Sem registros.</span>'}</div></details>`;
@@ -755,15 +775,19 @@ async function del(id){
    if(c=='comments')s.docs.forEach(d=>{const x=d.data().files;if(Array.isArray(x))fl.push(...x)});
    for(let i=0;i<s.docs.length;i+=400){const b=db.batch();s.docs.slice(i,i+400).forEach(d=>b.delete(d.ref));await b.commit()}
   }
+  await delDocs(S.links.filter(l=>l.a==id||l.b==id).map(l=>({ref:db.collection('links').doc(l.id)})));
   await tr.delete();go('');rmFiles(fl);
  }catch(x){saveFail(x)}
 }
 let ctype='topic';
-function compose(type){
- const keep=type&&$('nt')?{t:$('nt').value,b:$('nb').value}:null;
- if(!type)S.natt=[];
+const DE={topic:'do tópico',poll:'da enquete',reminder:'da tarefa'};
+function compose(type,from){
+ const keep=type&&!from&&$('nt')?{t:$('nt').value,b:$('nb').value}:null;
+ if(!type||from){S.natt=[];S.origin=from&&T(from)?from:null}
  ctype=type||ctype;
- $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card"><h3 style="margin-top:0">Novo item</h3>
+ const og=S.origin&&T(S.origin);
+ $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card"><h3 style="margin-top:0">${og?'Desdobrar em novo item':'Novo item'}</h3>
+ ${og?`<div class="banner" style="margin:0 0 10px">↪ Desdobramento ${DE[og.type]||'do item'} <b>“${e(og.title)}”</b>. Os dois itens ficarão vinculados. <button class="lnk" onclick="S.origin=null;compose('${ctype}')">Não vincular</button></div>`:''}
  <div class="tabs">${Object.entries(TYPES).map(([k,v])=>`<button class="btn ${ctype==k?'':'ghost'}" onclick="compose('${k}')">${v}</button>`).join('')}</div>
  <input id="nt" class="f" maxlength="200" placeholder="Título">
  <textarea id="nb" class="f" rows="5" maxlength="10000" placeholder="Descrição / mensagem — digite @ para mencionar alguém ou @todos para avisar todos" oninput="mq(this)" onkeydown="mk(event)" onblur="setTimeout(mclose,200)"></textarea>
@@ -775,11 +799,14 @@ function compose(type){
  <label class="meta">Encerrar automaticamente em (opcional)</label><input id="ne" type="datetime-local" class="f">
  <p class="meta" style="margin:0">Ao encerrar (no prazo ou manualmente), a conclusão será a opção mais votada. Enquetes não recebem comentários.</p>`:''}
  ${ctype=='reminder'?`<label class="meta" style="display:block;margin-top:10px">Prazo</label><input id="nd" type="date" class="f"><label class="meta">Responsáveis (opcional; marque uma ou mais pessoas)</label>
- <div class="pick">${dir().map(([i,n])=>`<label><input type="checkbox" name="na" value="${e(i)}"> ${av({uid:i,name:n},'sm')} ${e(n)}${i==S.user.uid?' <span class="meta">(você)</span>':''}</label>`).join('')||'<span class="meta">Nenhuma pessoa no diretório ainda.</span>'}</div>
+ <div class="pick">${dir().map(([i,n])=>`<label><input type="checkbox" name="na" value="${e(i)}"> ${av({uid:i,name:n},'sm')} ${e(n)}${i==S.user.uid?' <span class="meta">(você)</span>':''}${R({uid:i})?` <span class="meta">· ${e(R({uid:i}))}</span>`:''}</label>`).join('')||'<span class="meta">Nenhuma pessoa no diretório ainda.</span>'}</div>
  <p class="meta" style="margin:0">Só os responsáveis atualizam o status (a fazer, em andamento, concluída). Sem responsável, quem atualiza é você.</p>`:''}
  <p class="meta">Atenção: depois de publicado, o item não pode ser editado.</p>
  <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn" id="pbtn" onclick="publish()">Publicar</button></div></div></div>`;
  if(keep){$('nt').value=keep.t;$('nb').value=keep.b}
+ else if(from&&og){const f=fin(og),c=f?(f.note||(og.type=='poll'&&S.cur==og.id?pollResult(og,S.votes):'')):'';
+  $('nt').value=og.title.slice(0,200);
+  $('nb').value=`Desdobramento ${DE[og.type]||'do item'} “${og.title}”.`+(c?`\nConclusão: ${c}`:'')+'\n\n';}
  drawNatt();
 }
 const closeM=()=>{mclose();$('modal').innerHTML=''};
@@ -807,11 +834,17 @@ async function publish(){
  try{
   o.files=await upAll(S.natt);
   const b=db.batch();
-  b.set(tr,o);
-  b.set(tr.collection('hist').doc(),{by:who(),txt:'criou o item',ts:TS()});
-  notify(b,{tid:tr.id,cid:null,title,text:body},mentionsIn(title+'\n'+body),extra);
-  await b.commit();
-  S.natt=[];closeM();S.view='andamento';go('');
+   b.set(tr,o);
+   const og=S.origin&&T(S.origin);
+   b.set(tr.collection('hist').doc(),{by:who(),txt:og?`criou o item como desdobramento de “${og.title.slice(0,80)}”`:'criou o item',ts:TS()});
+   if(og){
+    b.set(db.collection('links').doc(),{a:og.id,b:tr.id,kind:'from',by:who(),ts:TS()});
+    b.set(col.doc(og.id).collection('hist').doc(),{by:who(),txt:`desdobrou em ${(TYPES[ctype]||'').replace(/^\S+\s/,'').toLowerCase()} “${title.slice(0,80)}”`,ts:TS()});
+    if(og.author.uid!=S.user.uid&&!(extra&&extra[og.author.uid]))extra={...(extra||{}),[og.author.uid]:'link'};
+   }
+   notify(b,{tid:tr.id,cid:null,title,text:body},mentionsIn(title+'\n'+body),extra);
+   await b.commit();
+   S.natt=[];S.origin=null;closeM();S.view='andamento';go(og?'t/'+tr.id:'');
  }catch(x){saveFail(x)}
  finally{S.busy=false;const p=$('pbtn');if(p){p.disabled=false;p.textContent='Publicar'}}
 }
@@ -829,23 +862,29 @@ function profile(){
   <button class="btn ghost sm" onclick="$('pf').click()">${has?'Trocar foto':'Escolher foto'}</button>
   ${has?'<button class="btn ghost sm danger" onclick="delPhoto()">Remover foto</button>':''}</div>
  <p class="meta" style="margin:8px 0 14px">A foto é recortada em quadrado e reduzida automaticamente.</p>
- <label class="meta" style="display:block;text-align:left">Seu nome (como aparece no portal)</label>
- <div style="display:flex;gap:8px;align-items:center"><input id="pn" class="f" maxlength="80" autocomplete="name" value="${e(S.user.name)}" onkeydown="if(event.key=='Enter')saveName()"><button class="btn" onclick="saveName()">Salvar</button></div>
+  <label class="meta" style="display:block;text-align:left">Seu nome (como aparece no portal)</label>
+ <input id="pn" class="f" maxlength="80" autocomplete="name" value="${e(S.user.name)}" onkeydown="if(event.key=='Enter')saveProfile()">
+ <label class="meta" style="display:block;text-align:left">Seu cargo na Diretoria (opcional; escolha da lista ou escreva)</label>
+ <input id="pr" class="f" maxlength="60" list="roles" placeholder="Ex.: Tesoureiro(a)" value="${e(R(S.user))}" onkeydown="if(event.key=='Enter')saveProfile()">
+ <datalist id="roles">${ROLES.map(r=>`<option value="${e(r)}">`).join('')}</datalist>
+ <button class="btn" style="width:100%;margin-top:4px" onclick="saveProfile()">Salvar nome e cargo</button>
  <div id="err" class="err" style="margin:4px 0 8px"></div>
- <button class="btn ghost" onclick="closeM()">Fechar</button></div></div>`;
+ <button class="btn ghost" onclick="closeM()">Fechar</button>
+ ${isAdm(S.user.email)?'':`<details class="dz"><summary>Excluir minha conta</summary><p class="meta" style="margin:8px 0">Apaga definitivamente seu login, seu perfil e seu bloco de anotações.</p><button class="btn ghost sm danger" onclick="delAccount()">Excluir minha conta…</button></details>`}</div></div>`;
 }
-async function saveName(){
- const n=cleanName($('pn').value);showErr('');
+async function saveProfile(){
+ const n=cleanName($('pn').value),r=String($('pr').value||'').trim().replace(/\s+/g,' ').slice(0,60),uid=S.user.uid;showErr('');
  if(n.length<2)return showErr('Informe seu nome (ao menos 2 caracteres).');
  if(n.length>80)return showErr('Nome muito longo (máx. 80 caracteres).');
- if(n===S.user.name)return showErr('Nenhuma alteração.',1);
+ if(n===S.user.name&&r===R(S.user))return showErr('Nenhuma alteração.',1);
  try{
-  const ur=db.collection('users').doc(S.user.uid),ex=(await ur.get()).exists,b=db.batch();
-  ex?b.update(ur,{name:n}):b.set(ur,{name:n,email:S.user.email,created:Date.now(),approved:false});
-  b.set(db.collection('people').doc(S.user.uid),{name:n,ts:TS()});
+  const b=db.batch();
+  if(n!==S.user.name){const ur=db.collection('users').doc(uid),ex=(await ur.get()).exists;
+   ex?b.update(ur,{name:n}):b.set(ur,{name:n,email:S.user.email,created:Date.now(),approved:false})}
+  b.set(db.collection('people').doc(uid),{name:n,role:r,ts:TS()},{merge:true});
   await b.commit();
-  S.user.name=n;wroteName=n;render();profile();showErr('Nome atualizado.',1);
- }catch(x){showErr(x&&x.code=='permission-denied'?'Sem permissão para alterar o nome (verifique se as regras novas foram publicadas no Firestore).':msg(x))}
+  S.user.name=n;wroteName=n;S.people[uid]={name:n,role:r};render();profile();showErr('Perfil atualizado.',1);
+ }catch(x){showErr(x&&x.code=='permission-denied'?'Sem permissão para salvar (verifique se as regras novas foram publicadas no Firestore).':msg(x))}
 }
 async function setPhoto(inp){
  const f=inp.files&&inp.files[0];inp.value='';if(!f)return;showErr('');
@@ -868,6 +907,149 @@ async function delPhoto(){
  if(!confirm('Remover sua foto de perfil?'))return;
  try{await db.collection('avatars').doc(S.user.uid).delete();delete S.avatars[S.user.uid];render();profile()}
  catch(x){showErr(x&&x.code=='permission-denied'?'Sem permissão para remover a foto.':msg(x))}
+}
+/* ---------- Excluir a própria conta ----------
+   Apaga: bloco de anotações (com PDFs), notificações, foto, nome/cargo no diretório, cadastro, aprovação e o login.
+   Itens, comentários e votos já publicados ficam no portal, como registro da Diretoria. */
+function delAccount(){
+ if(!S.user||isAdm(S.user.email))return alert('A conta do administrador não pode ser excluída por aqui.');
+ $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card" style="max-width:460px"><h3 style="margin-top:0;color:var(--red)">Excluir minha conta</h3>
+ <p style="margin:0 0 6px">Esta ação é <b>definitiva</b>. Serão apagados:</p>
+ <ul style="margin:0 0 8px;padding-left:20px"><li>seu login (e-mail e senha);</li><li>seu perfil: nome, cargo e foto;</li><li>seu 📓 bloco de anotações, com todas as anotações e PDFs;</li><li>suas notificações.</li></ul>
+ <p class="meta">Itens, comentários e votos que você já publicou continuam no portal, com seu nome, como registro da Diretoria. Para voltar, será preciso criar uma conta nova e aguardar a aprovação.</p>
+ <label class="meta">Confirme sua senha</label><input id="dpw" class="f" type="password" autocomplete="current-password">
+ <label style="display:flex;gap:8px;align-items:flex-start;font-size:14px;margin:6px 0"><input id="dok" type="checkbox" style="margin-top:4px"> Entendo que a exclusão é definitiva e não pode ser desfeita.</label>
+ <div id="err" class="err"></div>
+ <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap"><button class="btn ghost" onclick="closeM()">Cancelar</button><button class="btn" id="dbtn" style="background:var(--red);border-color:var(--red)" onclick="delMe()">Excluir definitivamente</button></div></div></div>`;
+}
+async function delMe(){
+ const u=au.currentUser,pw=$('dpw').value,btn=$('dbtn');if(!u)return;
+ if(!pw)return showErr('Informe sua senha.');
+ if(!$('dok').checked)return showErr('Marque a confirmação de que a exclusão é definitiva.');
+ btn.disabled=true;showErr('Excluindo…',1);
+ const uid=u.uid,email=(u.email||'').toLowerCase(),soft=async f=>{try{await f()}catch(x){if(!(x&&x.code=='permission-denied'))throw x}};
+ try{await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email,pw))}
+ catch(x){btn.disabled=false;return showErr(msg(x))}
+ try{
+  const nb=db.collection('notes').doc(uid);
+  await soft(async()=>{const fs=await nb.collection('files').get();
+   for(const d of fs.docs)await delDocs((await d.ref.collection('chunks').get()).docs);
+   await delDocs(fs.docs);await delDocs((await nb.collection('items').get()).docs)});
+  await soft(async()=>delDocs((await notifCol(uid).get()).docs));
+  dying=true;unsubP&&unsubP();unsubA&&unsubA();unsubP=unsubA=null;stopData();
+  const b=db.batch();['avatars','people','users'].forEach(c=>b.delete(db.collection(c).doc(uid)));b.delete(db.collection('allowed').doc(email));
+  await b.commit();
+  await u.delete();
+  closeM();S.user=null;S.auth='in';dying=false;render();
+  alert('Sua conta foi excluída.');
+ }catch(x){dying=false;btn.disabled=false;showErr('Não foi possível concluir a exclusão: '+msg(x));if(au.currentUser)enter(au.currentUser,(au.currentUser.email||'').split('@')[0])}
+}
+
+/* ---------- Diretoria: quem é quem ---------- */
+function board(){
+ const ix=r=>{const i=ROLES.indexOf(r);return r?(i<0?ROLES.length:i):ROLES.length+1};
+ const L=dir().sort((a,b)=>ix(R({uid:a[0]}))-ix(R({uid:b[0]}))||a[1].localeCompare(b[1],'pt-BR'));
+ return `<h2 style="margin:0 0 4px">🏛 Diretoria</h2><p class="meta" style="margin:0 0 10px">Quem é quem: nome e cargo de cada pessoa com acesso ao portal. Para indicar ou mudar o seu cargo, clique na sua foto ou no seu nome, no alto da página.</p>
+ <div class="card list">${L.length?L.map(([id,n])=>`<div class="row" style="cursor:default">${av({uid:id,name:n})}<div><h3>${e(n)}${id==S.user.uid?' <span class="meta">(você)</span>':''}</h3><div class="meta">${R({uid:id})?`<b style="color:var(--gt)">${e(R({uid:id}))}</b>`:'<i>cargo não informado</i>'}</div></div>${id==S.user.uid?'<button class="btn ghost sm" style="margin-left:auto" onclick="profile()">Editar</button>':''}</div>`).join(''):'<div class="empty">Ninguém ainda.</div>'}</div>`;
+}
+
+/* ---------- Vínculos entre itens ----------
+   Qualquer item pode ser desdobrado em qualquer tipo (tópico, enquete ou tarefa), aberto ou encerrado,
+   e pode ser vinculado a qualquer outro item já existente. O vínculo aparece nos dois itens. */
+const linksOf=id=>S.links.filter(l=>(l.a==id||l.b==id)&&T(l.a==id?l.b:l.a));
+const relLabel=(l,id)=>l.kind=='from'?(l.a==id?'↪ Desdobrou-se em':'↩ Desdobramento de'):'🔗 Relacionado a';
+const DER={
+ topic:{topic:'💬 Abrir tópico derivado',poll:'📊 Encaminhar para enquete',reminder:'📋 Delegar tarefa'},
+ poll:{topic:'💬 Abrir tópico de discussão',poll:'📊 Nova enquete (ex.: 2º turno)',reminder:'📋 Delegar tarefa'},
+ reminder:{topic:'💬 Abrir tópico de discussão',poll:'📊 Consultar a Diretoria (enquete)',reminder:'📋 Criar tarefa seguinte'}};
+function linksCard(t){
+ const i0=sid(t.id),L=linksOf(t.id);
+ return `<div class="card"><b>🔗 Itens vinculados (${L.length})</b>
+ ${L.map(l=>{const o=T(l.a==t.id?l.b:l.a),canU=isAdmin()||(l.kind=='rel'&&l.by&&l.by.uid==S.user.uid);
+  return `<div class="lk"><span class="meta">${relLabel(l,t.id)}</span> <button class="lnk" onclick="go('t/${sid(o.id)}')">${TYPES[o.type]||''} · ${e(o.title)}</button> <span class="meta">${isRem(o)?STI[stOf(o)]+' '+STL[stOf(o)]:arch(o)?'📦 encerrado':'aberto'}</span>${canU?` <button class="lnk danger" title="Desfazer vínculo" onclick="unlink('${sid(l.id)}')">✕</button>`:''}</div>`}).join('')||'<p class="meta" style="margin:6px 0">Nenhum vínculo ainda.</p>'}
+ <div class="lka"><span class="meta">Desdobrar em:</span>${Object.entries(DER[t.type]||DER.topic).map(([k,v])=>`<button class="btn ghost sm" onclick="compose('${k}','${i0}')">${v}</button>`).join('')}<button class="btn ghost sm" onclick="linkPick('${i0}')">🔗 Vincular a item existente</button></div></div>`;
+}
+function linkPick(id){
+ const t=T(id);if(!t)return;S.lp={id};
+ $('modal').innerHTML=`<div class="modal" onclick="if(event.target==this)closeM()"><div class="card"><h3 style="margin-top:0">🔗 Vincular a item existente</h3>
+ <p class="meta" style="margin:0">Escolha o item relacionado a “${e(t.title)}”. O vínculo aparece nos dois itens.</p>
+ <input id="lq" class="f" placeholder="Buscar" oninput="drawLP()">
+ <div id="lpl" class="card list" style="max-height:50vh;overflow:auto;margin:6px 0"></div>
+ <div style="text-align:right"><button class="btn ghost" onclick="closeM()">Fechar</button></div></div></div>`;
+ drawLP();$('lq').focus();
+}
+function drawLP(){
+ const id=S.lp&&S.lp.id,q=fold(($('lq')||{}).value||''),have=new Set(linksOf(id).map(l=>l.a==id?l.b:l.a));
+ const L=S.topics.filter(t=>t.id!=id&&!have.has(t.id)&&(!q||fold(t.title||'').includes(q))).sort((a,b)=>(b.act||b.ts)-(a.act||a.ts)).slice(0,60);
+ $('lpl').innerHTML=L.map(t=>`<div class="row" onclick="link('${sid(id)}','${sid(t.id)}')"><div><h3>${e(t.title)}</h3><div class="meta">${TYPES[t.type]||''} · ${e(N(t.author))} · ${arch(t)?'encerrado':'aberto'}</div></div></div>`).join('')||'<div class="empty" style="padding:16px">Nenhum item encontrado.</div>';
+}
+async function link(a,c){
+ const A=T(a),B=T(c);if(!A||!B)return;
+ const b=db.batch();
+ b.set(db.collection('links').doc(),{a,b:c,kind:'rel',by:who(),ts:TS()});
+ b.set(col.doc(a).collection('hist').doc(),{by:who(),txt:`vinculou a “${B.title.slice(0,80)}”`,ts:TS()});
+ b.set(col.doc(c).collection('hist').doc(),{by:who(),txt:`vinculou a “${A.title.slice(0,80)}”`,ts:TS()});
+ try{await b.commit();closeM()}catch(x){saveFail(x)}
+}
+async function unlink(lid){
+ if(!S.links.some(x=>x.id==lid)||!confirm('Desfazer este vínculo? Os dois itens continuam existindo.'))return;
+ try{await db.collection('links').doc(lid).delete()}catch(x){saveFail(x)}
+}
+
+/* ---------- Bloco de anotações (espaço individual) ----------
+   Fica em notes/{uid}: as regras só deixam a própria pessoa ler e gravar. */
+const noteBase=()=>db.collection('notes').doc(S.user.uid);
+function noteOpen(id){
+ if(S.ned&&id&&S.ned.id==id)return;
+ if(S.ned&&S.ned.dirty&&!confirm('Descartar as alterações da anotação aberta?'))return;
+ const n=id&&S.notes.find(x=>x.id==id);
+ S.ned={id:n?n.id:'new',t:n?n.title||'':'',b:n?n.text||'':'',files:n&&Array.isArray(n.files)?n.files.slice():[],pend:[],rm:[],f:n?null:'xt',ss:null};
+ render();
+}
+function noteClose(){if(S.ned&&S.ned.dirty&&!confirm('Descartar as alterações?'))return;S.ned=null;render()}
+async function notePick(inp){
+ const fs=[...(inp.files||[])],N0=S.ned;inp.value='';if(!N0)return;
+ for(const f of fs){
+  if(N0.files.length+N0.pend.length>=10){alert('No máximo 10 PDFs por anotação.');break}
+  if(!(f.type=='application/pdf'||/\.pdf$/i.test(f.name))){alert(f.name+': no bloco de anotações só entram PDFs.');continue}
+  try{N0.pend.push(await prep(f));N0.dirty=1}catch(x){alert(f.name+': '+((x&&x.message)||x))}
+ }
+ render();
+}
+function noteUnpick(k,i){const N0=S.ned;if(!N0)return;if(k=='f'){N0.rm.push(N0.files[i].id);N0.files.splice(i,1)}else N0.pend.splice(i,1);N0.dirty=1;render()}
+async function noteSave(){
+ const N0=S.ned;if(!N0||S.busy)return;
+ N0.t=$('xt').value.trim().slice(0,200);N0.b=$('xb').value;
+ if(!N0.t&&!N0.b.trim()&&!N0.files.length&&!N0.pend.length)return alert('A anotação está vazia.');
+ if(N0.b.length>100000)return alert('Anotação muito longa (máx. 100 mil caracteres).');
+ S.busy=true;render();
+ try{
+  const up=await Promise.all(N0.pend.map(f=>upFile(f,'n')));
+  const files=[...N0.files,...up].map(f=>({id:f.id,name:f.name,size:f.size,type:'application/pdf'}));
+  const ref=N0.id=='new'?noteBase().collection('items').doc():noteBase().collection('items').doc(N0.id);
+  const data={title:N0.t||'(sem título)',text:N0.b,files,upd:TS()};if(N0.id=='new')data.ts=TS();
+  await ref.set(data,{merge:true});
+  rmFiles(N0.rm.map(id=>({id})),'n');
+  S.ned=null;
+ }catch(x){saveFail(x)}
+ finally{S.busy=false;render()}
+}
+async function noteDel(id){
+ const n=S.notes.find(x=>x.id==id);if(!n||!confirm(`Excluir a anotação “${n.title||'(sem título)'}” e os PDFs dela?`))return;
+ try{await noteBase().collection('items').doc(id).delete();rmFiles(n.files,'n');if(S.ned&&S.ned.id==id)S.ned=null;render()}catch(x){saveFail(x)}
+}
+function notebook(){
+ const N0=S.ned,L=S.notes;
+ const ed=N0?`<div class="card"><input id="xt" class="f" maxlength="200" placeholder="Título da anotação" value="${e(N0.t)}" oninput="S.ned&&(S.ned.dirty=1)">
+  <textarea id="xb" class="f" rows="12" placeholder="Escreva aqui. Só você vê." oninput="S.ned&&(S.ned.dirty=1)">${e(N0.b)}</textarea>
+  <div class="att">${N0.files.map((f,k)=>`<span class="chip"><span onclick="openFile('${sid(f.id)}','p','n')" title="Abrir">📄 ${e(f.name)}</span> <span class="meta">${fsz(+f.size||0)}</span><button type="button" class="lnk danger" title="Retirar PDF" onclick="noteUnpick('f',${k})">✕</button></span>`).join('')}${N0.pend.map((f,k)=>`<span class="chip">📄 ${e(f.name)} <span class="meta">${fsz(f.size)} · será enviado ao salvar</span><button type="button" class="lnk danger" title="Retirar PDF" onclick="noteUnpick('p',${k})">✕</button></span>`).join('')}</div>
+  <input id="xf" type="file" hidden multiple accept="application/pdf" onchange="notePick(this)">
+  <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" ${S.busy?'disabled':''} onclick="noteSave()">${S.busy?'Salvando…':'Salvar'}</button><button class="btn ghost" onclick="$('xf').click()">📎 Anexar PDF</button><button class="btn ghost" onclick="noteClose()">Cancelar</button>${N0.id!='new'?`<button class="btn ghost danger" onclick="noteDel('${sid(N0.id)}')">Excluir anotação</button>`:''}</div></div>`:'';
+ return `<h2 style="margin:0 0 4px">📓 Bloco de anotações</h2>
+ <div class="banner priv">🔒 <b>Espaço individual.</b> Só você vê as anotações e os PDFs guardados aqui. Ninguém mais da Diretoria tem acesso a eles pelo portal, nem o administrador.</div>
+ ${N0?'':`<button class="btn" style="margin:4px 0 12px" onclick="noteOpen()">＋ Nova anotação</button>`}
+ ${ed}
+ <div class="card list">${L.length?L.map(n=>`<div class="row ${N0&&N0.id==n.id?'on':''}" onclick="noteOpen('${sid(n.id)}')"><span style="font-size:22px">📝</span><div style="min-width:0;flex:1"><h3>${e(n.title||'(sem título)')}</h3>${n.text?`<div class="meta">${e(String(n.text).replace(/\s+/g,' ').slice(0,140))}</div>`:''}<div class="meta">atualizada ${ago(n.upd||n.ts)}${Array.isArray(n.files)&&n.files.length?` · 📎 ${n.files.length} PDF(s)`:''}</div></div></div>`).join(''):'<div class="empty">Nenhuma anotação ainda.</div>'}</div>`;
 }
 render();
 </script>
